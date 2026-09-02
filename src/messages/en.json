@@ -1,0 +1,157 @@
+{
+  "meta": {
+    "title": "Event Dining",
+    "description": "Choose one dish from our partner kitchens and collect it at the venue."
+  },
+  "common": {
+    "back": "Back",
+    "continue": "Continue",
+    "cancel": "Cancel",
+    "change": "Change",
+    "close": "Close",
+    "loading": "Loading",
+    "currency": "SAR",
+    "price": "Price",
+    "restaurant": "Restaurant",
+    "item": "Item",
+    "language": "Language",
+    "english": "English",
+    "arabic": "العربية",
+    "required": "Required",
+    "skipToContent": "Skip to main content"
+  },
+  "home": {
+    "eyebrow": "Event dining",
+    "cta": "Explore Restaurants",
+    "restaurantsTitle": "Restaurants",
+    "restaurantsSubtitle": "One order per guest. Choose the kitchen you would like to eat from.",
+    "howTitle": "How it works",
+    "steps": {
+      "one": { "title": "Choose a restaurant", "body": "Browse the kitchens taking part in this event." },
+      "two": { "title": "Pick one dish", "body": "Each guest orders a single item." },
+      "three": { "title": "Verify your mobile", "body": "We send a 6-digit code to your Saudi number." },
+      "four": { "title": "Collect your order", "body": "Show your order number at the counter." }
+    },
+    "noEvent": {
+      "title": "No event is running",
+      "body": "There is no active event at the moment. Please check back later."
+    },
+    "noRestaurants": "No restaurants have been added yet."
+  },
+  "restaurantCard": {
+    "available": "Accepting orders",
+    "unavailable": "Currently unavailable",
+    "view": "View menu"
+  },
+  "restaurant": {
+    "searchPlaceholder": "Search menu...",
+    "allCategories": "All",
+    "select": "Select",
+    "selected": "Selected",
+    "unavailable": "Unavailable",
+    "noResults": "No menu items match your search.",
+    "noItems": "No menu items available.",
+    "continueWith": "Continue with {item}",
+    "closedTitle": "This restaurant is currently unavailable",
+    "closedBody": "It is not accepting orders right now. Please choose another restaurant.",
+    "backToRestaurants": "Back to restaurants",
+    "menu": "Menu",
+    "itemCount": "{count} items"
+  },
+  "selection": {
+    "title": "Your Selection",
+    "subtitle": "Review your choice before you continue. You can order one item per event.",
+    "changeSelection": "Change selection",
+    "continue": "Continue",
+    "empty": {
+      "title": "Nothing selected yet",
+      "body": "Choose a restaurant and one dish to continue.",
+      "cta": "Explore restaurants"
+    }
+  },
+  "details": {
+    "title": "Complete Your Order",
+    "subtitle": "We need your details so event staff can hand over your order.",
+    "name": "Full Name",
+    "namePlaceholder": "Your full name",
+    "email": "Email Address",
+    "emailPlaceholder": "you@example.com",
+    "phone": "Saudi Mobile Number",
+    "phoneHint": "We will send a 6-digit verification code to this number.",
+    "countryCode": "Saudi Arabia (+966)",
+    "submit": "Verify Phone Number",
+    "submitting": "Sending code...",
+    "privacy": "Your details are used only for this event order."
+  },
+  "otp": {
+    "title": "Verify Your Mobile Number",
+    "subtitle": "We sent a 6-digit verification code to",
+    "codeLabel": "Verification code",
+    "digitLabel": "Digit {index}",
+    "verify": "Verify",
+    "verifying": "Verifying...",
+    "noCode": "Didn't receive the code?",
+    "resend": "Resend code",
+    "resendIn": "Resend code in {seconds} seconds",
+    "sent": "Verification code sent to {phone}",
+    "verified": "Phone number verified",
+    "changeNumber": "Change number",
+    "creatingOrder": "Submitting order..."
+  },
+  "confirmation": {
+    "title": "Order Confirmed",
+    "thanks": "Thank you, {name}.",
+    "received": "Your order has been received.",
+    "orderNumber": "Order Number",
+    "keepNumber": "Please keep your order number for collection.",
+    "status": "Status",
+    "showQr": "Show this code at the collection counter.",
+    "trackTitle": "Order progress",
+    "newOrder": "Browse restaurants",
+    "duplicateTitle": "Order Already Submitted",
+    "duplicateBody": "You have already placed an order for this event.",
+    "viewOrder": "View Order",
+    "notFound": {
+      "title": "Order not found",
+      "body": "We could not find an order with that number.",
+      "cta": "Back to restaurants"
+    }
+  },
+  "status": {
+    "new": "Order Received",
+    "accepted": "Accepted",
+    "preparing": "Preparing",
+    "ready": "Ready for Pickup",
+    "completed": "Completed",
+    "cancelled": "Cancelled"
+  },
+  "errors": {
+    "name_invalid": "Please enter your full name.",
+    "email_invalid": "Please enter a valid email address.",
+    "phone_required": "Please enter your mobile number.",
+    "phone_invalid": "Please enter a valid Saudi mobile number.",
+    "otp_invalid": "Please enter the 6-digit verification code.",
+    "otp_incorrect": "The verification code is incorrect. Please try again.",
+    "otp_expired": "This verification code has expired. Please request a new code.",
+    "otp_rate_limited": "Too many attempts. Please wait a moment before requesting another code.",
+    "otp_send_failed": "We could not send the verification code. Please try again.",
+    "sms_not_configured": "SMS verification is not configured for this environment.",
+    "not_verified": "Please verify your mobile number first.",
+    "invalid_selection": "Please choose a restaurant and an item again.",
+    "event_not_found": "This event is no longer available.",
+    "event_inactive": "This event is not accepting orders.",
+    "restaurant_not_found": "This restaurant is no longer available.",
+    "restaurant_disabled": "This restaurant is currently unavailable.",
+    "restaurant_not_in_event": "This restaurant is not taking part in this event.",
+    "item_not_found": "This item is no longer available.",
+    "item_unavailable": "This item is currently unavailable.",
+    "item_restaurant_mismatch": "That item does not belong to the selected restaurant.",
+    "duplicate_order": "You have already placed an order for this event.",
+    "network": "Something went wrong. Please try again.",
+    "unknown": "Something went wrong. Please try again."
+  },
+  "footer": {
+    "rights": "All rights reserved.",
+    "help": "Need help? Ask a member of event staff."
+  }
+}

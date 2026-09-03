@@ -8,13 +8,12 @@
  */
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { integrationTarget } from './guard';
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY;
-const publicKey =
-  process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+const target = integrationTarget();
+const { url, serviceKey, publicKey } = target;
 
-const live = Boolean(url && serviceKey);
+const live = target.enabled;
 const describeLive = live ? describe : describe.skip;
 
 // Fixed test identifiers so a rerun cleans up after itself.
@@ -53,6 +52,17 @@ describeLive('order placement rules', () => {
     await admin.from('customers').delete().in('phone', [PHONE, SECOND_PHONE]);
     await admin.from('restaurants').delete().in('slug', [RESTAURANT_SLUG, DISABLED_SLUG]);
     await admin.from('events').delete().in('slug', [EVENT_SLUG, OTHER_EVENT_SLUG]);
+
+    // Rows the fixtures caused the database to generate. Order notifications
+    // cascade with their order, but a disabled-restaurant notification carries
+    // no order_id, so it would otherwise outlive the restaurant that caused it.
+    await admin
+      .from('notifications')
+      .delete()
+      .eq('type', 'restaurant.disabled')
+      .like('body', `%${SUFFIX}%`);
+
+    await admin.from('admin_audit_logs').delete().in('meta->>phone', [PHONE, SECOND_PHONE]);
   }
 
   beforeAll(async () => {

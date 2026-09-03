@@ -3,13 +3,14 @@
  * Skipped automatically when no service-role key is configured.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { integrationTarget } from './guard';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { IMAGE_BUCKET } from '@/lib/images/config';
 import { cleanupReplacedImage, deleteImageObject, uploadImageObject } from '@/lib/images/storage';
 
-const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.SUPABASE_SECRET_KEY;
-const live = Boolean(url && serviceKey);
+const target = integrationTarget();
+const { url, serviceKey } = target;
+const live = target.enabled;
 const describeLive = live ? describe : describe.skip;
 
 /** Smallest valid JPEG header plus padding — enough for a real upload. */

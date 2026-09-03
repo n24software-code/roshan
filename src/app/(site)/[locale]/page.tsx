@@ -64,6 +64,30 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
         </div>
       </section>
 
+      {/* --------------------------------------------------- restaurants */}
+      <section id="restaurants" className="container-page scroll-mt-24 py-14 md:py-20">
+        <header className="max-w-2xl">
+          <h2 className="text-3xl font-extrabold tracking-tight text-ink-900 md:text-4xl">
+            {t('home.restaurantsTitle')}
+          </h2>
+          <p className="mt-3 text-ink-500">{t('home.restaurantsSubtitle')}</p>
+        </header>
+
+        {restaurants.length === 0 ? (
+          <div className="mt-10">
+            <EmptyState title={t('home.noRestaurants')} />
+          </div>
+        ) : (
+          <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {restaurants.map((restaurant, index) => (
+              <li key={restaurant.id} className="animate-fade-up">
+                <RestaurantCard restaurant={restaurant} locale={locale} priority={index < 3} />
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
       {/* ------------------------------------------------- how it works */}
       <section className="border-b border-sand-200 bg-white">
         <div className="container-page py-14 md:py-16">
@@ -89,30 +113,6 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
             ))}
           </ol>
         </div>
-      </section>
-
-      {/* --------------------------------------------------- restaurants */}
-      <section id="restaurants" className="container-page scroll-mt-24 py-14 md:py-20">
-        <header className="max-w-2xl">
-          <h2 className="text-3xl font-extrabold tracking-tight text-ink-900 md:text-4xl">
-            {t('home.restaurantsTitle')}
-          </h2>
-          <p className="mt-3 text-ink-500">{t('home.restaurantsSubtitle')}</p>
-        </header>
-
-        {restaurants.length === 0 ? (
-          <div className="mt-10">
-            <EmptyState title={t('home.noRestaurants')} />
-          </div>
-        ) : (
-          <ul className="mt-10 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {restaurants.map((restaurant, index) => (
-              <li key={restaurant.id} className="animate-fade-up">
-                <RestaurantCard restaurant={restaurant} locale={locale} priority={index < 3} />
-              </li>
-            ))}
-          </ul>
-        )}
       </section>
     </>
   );

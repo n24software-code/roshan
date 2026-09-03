@@ -1,6 +1,6 @@
 'use client';
 
-import Image from 'next/image';
+import { MediaImage } from '@/components/ui/MediaImage';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useTransition } from 'react';
@@ -10,6 +10,8 @@ import { useToast } from './Toaster';
 import { FormRow, Toggle, adminInput, adminTextarea } from './AdminForm';
 import { Button } from '@/components/ui/Button';
 import { TableShell, Td, Th } from './DataTable';
+import { ImageUploader } from './ImageUploader';
+import { useUploadTracker } from '@/lib/images/client';
 import type { EventRow, RestaurantRow } from '@/types/database';
 
 type Restaurant = RestaurantRow & { event_restaurants: { event_id: string }[] };
@@ -71,6 +73,13 @@ export function RestaurantManager({
   const [form, setForm] = useState<FormState | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Restaurant | null>(null);
+  const uploads = useUploadTracker();
+
+  /** Closes the dialog, removing any images uploaded but never saved. */
+  function closeForm() {
+    void uploads.discard(null);
+    setForm(null);
+  }
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => (current ? { ...current, [key]: value } : current));
@@ -86,6 +95,7 @@ export function RestaurantManager({
         return;
       }
       toast({ title: form.id ? 'Restaurant updated' : 'Restaurant created', tone: 'success' });
+      void uploads.discard(null);
       setForm(null);
       router.refresh();
     });
@@ -166,15 +176,12 @@ export function RestaurantManager({
             <Td>
               <div className="flex items-center gap-3">
                 <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-sand-200">
-                  {restaurant.logo_url && (
-                    <Image
-                      src={restaurant.logo_url}
-                      alt=""
-                      fill
-                      sizes="40px"
-                      className="object-cover"
-                    />
-                  )}
+                  <MediaImage
+                    reference={restaurant.logo_url}
+                    alt=""
+                    kind="restaurant"
+                    sizes="40px"
+                  />
                 </div>
                 <div>
                   <p className="font-bold text-ink-900">{restaurant.name_en}</p>
@@ -228,12 +235,12 @@ export function RestaurantManager({
       {/* ------------------------------------------------------ edit dialog */}
       <Modal
         open={form !== null}
-        onClose={() => setForm(null)}
+        onClose={closeForm}
         wide
         title={form?.id ? 'Edit restaurant' : 'Add restaurant'}
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setForm(null)}>
+            <Button variant="secondary" size="sm" onClick={closeForm}>
               Cancel
             </Button>
             <Button size="sm" onClick={save} disabled={pending}>
@@ -325,25 +332,26 @@ export function RestaurantManager({
               </FormRow>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormRow label="Logo URL" htmlFor="r-logo">
-                <input
-                  id="r-logo"
-                  className={adminInput}
-                  value={form.logo_url}
-                  onChange={(event) => update('logo_url', event.target.value)}
-                  placeholder="https://..."
-                />
-              </FormRow>
-              <FormRow label="Cover image URL" htmlFor="r-cover">
-                <input
-                  id="r-cover"
-                  className={adminInput}
-                  value={form.cover_image_url}
-                  onChange={(event) => update('cover_image_url', event.target.value)}
-                  placeholder="https://..."
-                />
-              </FormRow>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <ImageUploader
+                label="Restaurant logo"
+                folder="restaurants"
+                owner={form.id ?? 'new'}
+                aspect="square"
+                value={form.logo_url || null}
+                onUploaded={uploads.track}
+                onChange={(next) => update('logo_url', next ?? '')}
+                hint="Square works best. Shown in this table."
+              />
+              <ImageUploader
+                label="Cover image"
+                folder="restaurants"
+                owner={form.id ?? 'new'}
+                value={form.cover_image_url || null}
+                onUploaded={uploads.track}
+                onChange={(next) => update('cover_image_url', next ?? '')}
+                hint="Wide image used on the storefront card and header."
+              />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">

@@ -10,9 +10,11 @@ import {
   updateOrderStatusSchema,
 } from '@/lib/validation/schemas';
 import { canTransition } from './transitions';
+import { cleanupReplacedImage } from '@/lib/images/storage';
 import type { OrderStatus } from '@/types/database';
 
-export type AdminResult = { ok: true; id?: string } | { ok: false; error: string };
+export type AdminResult =
+  { ok: true; id?: string; warning?: string } | { ok: false; error: string };
 
 const DENIED: AdminResult = { ok: false, error: 'You are not authorized to do that.' };
 
@@ -165,12 +167,32 @@ export async function deleteRestaurant(id: string): Promise<AdminResult> {
     );
   }
 
+  const { data: images } = await supabase
+    .from('restaurants')
+    .select('logo_url, cover_image_url')
+    .eq('id', id)
+    .maybeSingle();
+
+  const { data: itemImages } = await supabase
+    .from('menu_items')
+    .select('image_url')
+    .eq('restaurant_id', id);
+
   const { error } = await supabase.from('restaurants').delete().eq('id', id);
   if (error) return fail(error.message);
 
+  // The row is gone; clear the storage objects it owned.
+  const warnings = (
+    await Promise.all([
+      cleanupReplacedImage(images?.logo_url, null),
+      cleanupReplacedImage(images?.cover_image_url, null),
+      ...(itemImages ?? []).map((row) => cleanupReplacedImage(row.image_url, null)),
+    ])
+  ).filter(Boolean);
+
   await auditLog(supabase, user.id, 'restaurant.delete', 'restaurants', id);
   revalidatePath('/admin/restaurants');
-  return { ok: true };
+  return { ok: true, warning: warnings.join(' ') || undefined };
 }
 
 // ---------------------------------------------------------------- menu
@@ -235,6 +257,11 @@ export async function saveMenuItem(input: unknown): Promise<AdminResult> {
   const { id, ...fields } = parsed.data;
   const payload = { ...fields, image_url: fields.image_url || null };
 
+  const previous = id
+    ? ((await supabase.from('menu_items').select('image_url').eq('id', id).maybeSingle()).data ??
+      null)
+    : null;
+
   const { data, error } = id
     ? await supabase.from('menu_items').update(payload).eq('id', id).select('id').maybeSingle()
     : await supabase.from('menu_items').insert(payload).select('id').maybeSingle();
@@ -248,8 +275,12 @@ export async function saveMenuItem(input: unknown): Promise<AdminResult> {
     'menu_items',
     data?.id ?? id ?? null,
   );
+
+  // The row now points at the new image, so the replaced object can go.
+  const warning = await cleanupReplacedImage(previous?.image_url, payload.image_url);
+
   revalidatePath('/admin/menu');
-  return { ok: true, id: data?.id ?? id };
+  return { ok: true, id: data?.id ?? id, warning: warning ?? undefined };
 }
 
 export async function setMenuItemAvailability(
@@ -287,12 +318,20 @@ export async function deleteMenuItem(id: string): Promise<AdminResult> {
     );
   }
 
+  const { data: image } = await supabase
+    .from('menu_items')
+    .select('image_url')
+    .eq('id', id)
+    .maybeSingle();
+
   const { error } = await supabase.from('menu_items').delete().eq('id', id);
   if (error) return fail(error.message);
 
+  const warning = await cleanupReplacedImage(image?.image_url, null);
+
   await auditLog(supabase, user.id, 'item.delete', 'menu_items', id);
   revalidatePath('/admin/menu');
-  return { ok: true };
+  return { ok: true, warning: warning ?? undefined };
 }
 
 // --------------------------------------------------------------- events
@@ -306,6 +345,10 @@ export async function saveEvent(input: unknown): Promise<AdminResult> {
 
   const { supabase, user } = context;
   const { id, ...fields } = parsed.data;
+  const previous = id
+    ? ((await supabase.from('events').select('logo_url, hero_image_url').eq('id', id).maybeSingle())
+        .data ?? null)
+    : null;
   const payload = {
     ...fields,
     logo_url: fields.logo_url || null,
@@ -329,9 +372,15 @@ export async function saveEvent(input: unknown): Promise<AdminResult> {
     'events',
     data?.id ?? id ?? null,
   );
+
+  const warnings = [
+    await cleanupReplacedImage(previous?.logo_url, payload.logo_url),
+    await cleanupReplacedImage(previous?.hero_image_url, payload.hero_image_url),
+  ].filter(Boolean);
+
   revalidatePath('/admin/events');
   revalidatePath('/admin/dashboard');
-  return { ok: true, id: data?.id ?? id };
+  return { ok: true, id: data?.id ?? id, warning: warnings.join(' ') || undefined };
 }
 
 export async function setEventStatus(

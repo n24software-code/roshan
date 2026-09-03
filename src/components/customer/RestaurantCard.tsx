@@ -1,5 +1,5 @@
-import Image from 'next/image';
 import Link from 'next/link';
+import { MediaImage } from '@/components/ui/MediaImage';
 import { createTranslator, localized } from '@/lib/i18n';
 import type { Locale } from '@/lib/i18n/config';
 import type { RestaurantRow } from '@/types/database';
@@ -23,21 +23,17 @@ export function RestaurantCard({
   const body = (
     <>
       <div className="relative aspect-[16/10] overflow-hidden bg-sand-200">
-        {restaurant.cover_image_url ? (
-          <Image
-            src={restaurant.cover_image_url}
-            alt=""
-            fill
-            priority={priority}
-            sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
-            className={cn(
-              'object-cover transition-transform duration-500',
-              isActive ? 'group-hover:scale-105' : 'grayscale',
-            )}
-          />
-        ) : (
-          <div className="pattern-geometric h-full w-full" aria-hidden="true" />
-        )}
+        <MediaImage
+          reference={restaurant.cover_image_url}
+          alt=""
+          kind="restaurant"
+          priority={priority}
+          sizes="(max-width: 768px) 100vw, (max-width: 1200px) 50vw, 33vw"
+          imageClassName={cn(
+            'transition-transform duration-500',
+            isActive ? 'group-hover:scale-105' : 'grayscale',
+          )}
+        />
 
         {cuisine && (
           <span className="absolute bottom-3 start-3 rounded-full bg-white/95 px-3 py-1 text-xs font-semibold text-ink-700 shadow-sm">

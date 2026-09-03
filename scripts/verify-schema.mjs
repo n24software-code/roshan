@@ -42,11 +42,28 @@ await db.exec(`
   do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
   do $$ begin create role service_role; exception when duplicate_object then null; end $$;
   do $$ begin create publication supabase_realtime; exception when duplicate_object then null; end $$;
+
+  -- Minimal stand-ins for the Storage schema, so 0004 can be verified here too.
+  create schema if not exists storage;
+  create table if not exists storage.buckets (
+    id text primary key,
+    name text not null,
+    public boolean not null default false,
+    file_size_limit bigint,
+    allowed_mime_types text[]
+  );
+  create table if not exists storage.objects (
+    id uuid primary key default gen_random_uuid(),
+    bucket_id text references storage.buckets (id),
+    name text,
+    owner uuid
+  );
+  alter table storage.objects enable row level security;
 `);
 check('auth schema, roles and realtime publication created', true);
 
 console.log('\nMigrations');
-for (const file of ['0001_init.sql', '0002_functions.sql', '0003_rls.sql']) {
+for (const file of ['0001_init.sql', '0002_functions.sql', '0003_rls.sql', '0004_storage.sql']) {
   try {
     await db.exec(read(`supabase/migrations/${file}`));
     check(`${file} applied`, true);
@@ -339,6 +356,38 @@ console.log('\nStatus history and notifications');
     [kfc.id],
   );
   check('existing orders survive the restaurant being disabled', Number(ordersIntact.n) === 1);
+}
+
+console.log('\nImage storage');
+{
+  const bucket = await one(`select * from storage.buckets where id = 'menu-images'`);
+  check('menu-images bucket exists', Boolean(bucket));
+  check('bucket is public (storefront reads anonymously)', bucket?.public === true);
+  check(
+    `bucket enforces a 5 MB limit (${bucket?.file_size_limit})`,
+    Number(bucket?.file_size_limit) === 5242880,
+  );
+  check(
+    'bucket allows only jpeg/png/webp',
+    JSON.stringify(bucket?.allowed_mime_types) ===
+      JSON.stringify(['image/jpeg', 'image/png', 'image/webp']),
+    JSON.stringify(bucket?.allowed_mime_types),
+  );
+
+  const { rows: policies } = await db.query(
+    `select policyname, cmd from pg_policies
+     where schemaname = 'storage' and tablename = 'objects' order by policyname`,
+  );
+  const names = policies.map((p) => p.policyname);
+  check(
+    `storage policies: ${names.join(', ')}`,
+    names.length === 4 &&
+      names.includes('menu_images_public_read') &&
+      names.includes('menu_images_admin_insert') &&
+      names.includes('menu_images_admin_update') &&
+      names.includes('menu_images_admin_delete'),
+  );
+  check('only reads are granted to anon', policies.filter((p) => p.cmd === 'SELECT').length === 1);
 }
 
 console.log('\nRow level security');

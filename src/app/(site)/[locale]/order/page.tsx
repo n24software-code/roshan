@@ -1,4 +1,4 @@
-import Image from 'next/image';
+import { MediaImage } from '@/components/ui/MediaImage';
 import Link from 'next/link';
 import { getLocaleContext } from '@/lib/i18n/server';
 import { formatPrice, localized } from '@/lib/i18n';
@@ -69,11 +69,9 @@ export default async function OrderPage({
 
         <div className="card-surface mt-6 overflow-hidden">
           <div className="flex gap-4 p-5">
-            {item.image_url && (
-              <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-sand-200">
-                <Image src={item.image_url} alt="" fill sizes="96px" className="object-cover" />
-              </div>
-            )}
+            <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-sand-200">
+              <MediaImage reference={item.image_url} alt="" sizes="96px" />
+            </div>
             <div className="min-w-0 flex-1">
               <p className="text-xs font-semibold tracking-[0.14em] text-ink-500 uppercase">
                 {t('common.restaurant')}

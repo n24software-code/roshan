@@ -1,6 +1,6 @@
 'use client';
 
-import Image from 'next/image';
+import { MediaImage } from '@/components/ui/MediaImage';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useTransition } from 'react';
 import {
@@ -14,6 +14,8 @@ import { Modal } from './Modal';
 import { useToast } from './Toaster';
 import { FormRow, Toggle, adminInput, adminSelect, adminTextarea } from './AdminForm';
 import { Button } from '@/components/ui/Button';
+import { ImageUploader } from './ImageUploader';
+import { useUploadTracker } from '@/lib/images/client';
 import { TableShell, Td, Th } from './DataTable';
 import type { MenuCategoryRow, MenuItemRow, RestaurantRow } from '@/types/database';
 
@@ -58,6 +60,13 @@ export function MenuManager({
   const [categoryForm, setCategoryForm] = useState<CategoryForm | null>(null);
   const [itemForm, setItemForm] = useState<ItemForm | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const uploads = useUploadTracker();
+
+  /** Closes the item dialog, removing any image uploaded but never saved. */
+  function closeItemForm() {
+    void uploads.discard(null);
+    setItemForm(null);
+  }
 
   function selectRestaurant(id: string) {
     const params = new URLSearchParams(searchParams.toString());
@@ -103,6 +112,7 @@ export function MenuManager({
         return;
       }
       toast({ title: itemForm.id ? 'Menu item updated' : 'Menu item added', tone: 'success' });
+      void uploads.discard(itemForm.image_url || null);
       setItemForm(null);
       router.refresh();
     });
@@ -278,15 +288,7 @@ export function MenuManager({
                   <Td>
                     <div className="flex items-center gap-3">
                       <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg bg-sand-200">
-                        {item.image_url && (
-                          <Image
-                            src={item.image_url}
-                            alt=""
-                            fill
-                            sizes="40px"
-                            className="object-cover"
-                          />
-                        )}
+                        <MediaImage reference={item.image_url} alt="" sizes="40px" />
                       </div>
                       <div>
                         <p className="font-bold text-ink-900">{item.name_en}</p>
@@ -418,12 +420,12 @@ export function MenuManager({
       {/* ------------------------------------------------------- item modal */}
       <Modal
         open={itemForm !== null}
-        onClose={() => setItemForm(null)}
+        onClose={closeItemForm}
         wide
         title={itemForm?.id ? 'Edit menu item' : 'Add menu item'}
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setItemForm(null)}>
+            <Button variant="secondary" size="sm" onClick={closeItemForm}>
               Cancel
             </Button>
             <Button size="sm" onClick={saveItemForm} disabled={pending}>
@@ -531,15 +533,15 @@ export function MenuManager({
               </FormRow>
             </div>
 
-            <FormRow label="Image URL" htmlFor="i-image">
-              <input
-                id="i-image"
-                className={adminInput}
-                placeholder="https://..."
-                value={itemForm.image_url}
-                onChange={(event) => setItemForm({ ...itemForm, image_url: event.target.value })}
-              />
-            </FormRow>
+            <ImageUploader
+              label="Menu item image"
+              folder="menu-items"
+              owner={itemForm.id ?? 'new'}
+              value={itemForm.image_url || null}
+              onUploaded={uploads.track}
+              onChange={(next) => setItemForm({ ...itemForm, image_url: next ?? '' })}
+              hint="Shown on the menu card in both languages."
+            />
 
             <Toggle
               checked={itemForm.is_available}

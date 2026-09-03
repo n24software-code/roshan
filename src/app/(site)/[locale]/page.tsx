@@ -1,4 +1,4 @@
-import Image from 'next/image';
+import { MediaImage } from '@/components/ui/MediaImage';
 import { getLocaleContext } from '@/lib/i18n/server';
 import { localized } from '@/lib/i18n';
 import { getActiveEvent, getEventRestaurants } from '@/lib/data/customer';
@@ -28,13 +28,13 @@ export default async function HomePage({ params }: { params: Promise<{ locale: s
       {/* ---------------------------------------------------------- hero */}
       <section className="relative isolate overflow-hidden bg-brand-900 text-white">
         {event.hero_image_url && (
-          <Image
-            src={event.hero_image_url}
+          <MediaImage
+            reference={event.hero_image_url}
             alt=""
-            fill
+            kind="event"
             priority
             sizes="100vw"
-            className="object-cover opacity-35"
+            imageClassName="opacity-35"
           />
         )}
         <div

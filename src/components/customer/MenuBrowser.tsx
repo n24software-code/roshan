@@ -1,6 +1,6 @@
 'use client';
 
-import Image from 'next/image';
+import { MediaImage } from '@/components/ui/MediaImage';
 import { useRouter } from 'next/navigation';
 import { useMemo, useState } from 'react';
 import { createTranslator, formatPrice, localized } from '@/lib/i18n';
@@ -245,17 +245,15 @@ function MenuItemCard({
           !available && 'opacity-60',
         )}
       >
-        {item.image_url && (
-          <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-sand-200 sm:h-28 sm:w-28">
-            <Image
-              src={item.image_url}
-              alt=""
-              fill
-              sizes="112px"
-              className={cn('object-cover', !available && 'grayscale')}
-            />
-          </div>
-        )}
+        {/* Always rendered so every card keeps the same shape, image or not. */}
+        <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-sand-200 sm:h-28 sm:w-28">
+          <MediaImage
+            reference={item.image_url}
+            alt=""
+            sizes="112px"
+            imageClassName={cn(!available && 'grayscale')}
+          />
+        </div>
 
         <div className="flex min-w-0 flex-1 flex-col">
           <h3 className="font-bold text-ink-900">{name}</h3>

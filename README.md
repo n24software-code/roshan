@@ -46,12 +46,12 @@ npm install
 
 Copy `.env.example` to `.env.local` and fill it in:
 
-| Variable | Where it runs | Purpose |
-| --- | --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | browser + server | Project URL |
+| Variable                               | Where it runs    | Purpose                                         |
+| -------------------------------------- | ---------------- | ----------------------------------------------- |
+| `NEXT_PUBLIC_SUPABASE_URL`             | browser + server | Project URL                                     |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | browser + server | Public key (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) |
-| `SUPABASE_SERVICE_ROLE_KEY` | **server only** | Order creation. Bypasses RLS — never expose it |
-| `NEXT_PUBLIC_APP_URL` | browser | Absolute app URL |
+| `SUPABASE_SERVICE_ROLE_KEY`            | **server only**  | Order creation. Bypasses RLS — never expose it  |
+| `NEXT_PUBLIC_APP_URL`                  | browser          | Absolute app URL                                |
 
 No Twilio credential belongs here. Twilio is configured inside Supabase (step 4).
 
@@ -63,10 +63,11 @@ all migrations and the development seed.
 Prefer running them individually? Apply in order:
 
 ```
-supabase/migrations/0001_init.sql     tables, constraints, indexes
+supabase/migrations/0001_init.sql       tables, constraints, indexes
 supabase/migrations/0002_functions.sql  place_order(), triggers, realtime
-supabase/migrations/0003_rls.sql      row level security
-supabase/seed.sql                     LEAP Riyadh demo data
+supabase/migrations/0003_rls.sql        row level security
+supabase/migrations/0004_storage.sql    image bucket + storage policies
+supabase/seed.sql                       LEAP Riyadh demo data
 ```
 
 `supabase/setup.sql` is generated — after editing a migration, regenerate it:
@@ -85,7 +86,7 @@ In the Supabase dashboard → **Authentication → Sign In / Providers → Phone
 4. Leave "Confirm phone" enabled
 
 Until this is configured, the OTP screen reports
-*"SMS verification is not configured for this environment."*
+_"SMS verification is not configured for this environment."_
 
 ### 5. Create an admin
 
@@ -153,6 +154,34 @@ The client never sends a price. `place_order()` has no price parameter at all, s
 tampered request cannot express one. Restaurant and item ids are treated as lookup
 keys and re-validated: the item must exist, be available, and belong to the chosen
 restaurant, which must itself be active and taking part in the active event.
+
+---
+
+## Images
+
+Admins upload image files in the dashboard — there is no image-URL field. Files
+go to `POST /api/admin/images`, which authorizes the caller, re-validates the
+file and writes to the `menu-images` Supabase Storage bucket. The service-role
+key stays on the server; the browser only ever posts a file.
+
+Keys look like `restaurants/<id>/<uuid>.jpg`, so an original filename can never
+influence the stored path and two uploads can never collide.
+
+The image columns hold a reference, resolved by `resolveImageUrl()`:
+
+| Stored value                  | Meaning                               |
+| ----------------------------- | ------------------------------------- |
+| `restaurants/<id>/<uuid>.jpg` | object in the bucket (uploads)        |
+| `/menu/kfc-logo.jpg`          | file shipped in `public/` (seed data) |
+| `https://…`                   | URL stored before uploads existed     |
+
+All three keep working, so no data migration was needed. Missing images render a
+styled placeholder rather than a broken icon.
+
+Uploads are restricted three ways: extension, declared MIME type, and the file's
+actual magic bytes — so an SVG renamed to `.jpg` with a spoofed content type is
+rejected. The bucket itself also enforces a 5 MB cap and the JPEG/PNG/WebP
+allow-list, and storage RLS blocks any non-admin write.
 
 ---
 

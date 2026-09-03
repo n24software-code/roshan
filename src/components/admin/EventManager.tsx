@@ -8,6 +8,8 @@ import { useToast } from './Toaster';
 import { FormRow, adminInput, adminSelect, adminTextarea } from './AdminForm';
 import { Button } from '@/components/ui/Button';
 import { TableShell, Td, Th } from './DataTable';
+import { ImageUploader } from './ImageUploader';
+import { useUploadTracker } from '@/lib/images/client';
 import { cn } from '@/lib/cn';
 import type { EventRow, EventStatus } from '@/types/database';
 
@@ -69,6 +71,13 @@ export function EventManager({ events }: { events: EventRow[] }) {
   const [pending, startTransition] = useTransition();
   const [form, setForm] = useState<FormState | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const uploads = useUploadTracker();
+
+  /** Closes the dialog, removing any images uploaded but never saved. */
+  function closeForm() {
+    void uploads.discard(null);
+    setForm(null);
+  }
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => (current ? { ...current, [key]: value } : current));
@@ -89,6 +98,7 @@ export function EventManager({ events }: { events: EventRow[] }) {
         return;
       }
       toast({ title: form.id ? 'Event updated' : 'Event created', tone: 'success' });
+      void uploads.discard(null);
       setForm(null);
       router.refresh();
     });
@@ -221,12 +231,12 @@ export function EventManager({ events }: { events: EventRow[] }) {
 
       <Modal
         open={form !== null}
-        onClose={() => setForm(null)}
+        onClose={closeForm}
         wide
         title={form?.id ? 'Edit event' : 'Create event'}
         footer={
           <>
-            <Button variant="secondary" size="sm" onClick={() => setForm(null)}>
+            <Button variant="secondary" size="sm" onClick={closeForm}>
               Cancel
             </Button>
             <Button size="sm" onClick={save} disabled={pending}>
@@ -316,25 +326,25 @@ export function EventManager({ events }: { events: EventRow[] }) {
               </FormRow>
             </div>
 
-            <div className="grid gap-4 sm:grid-cols-2">
-              <FormRow label="Event logo URL" htmlFor="e-logo">
-                <input
-                  id="e-logo"
-                  className={adminInput}
-                  placeholder="https://..."
-                  value={form.logo_url}
-                  onChange={(changeEvent) => update('logo_url', changeEvent.target.value)}
-                />
-              </FormRow>
-              <FormRow label="Hero image URL" htmlFor="e-hero">
-                <input
-                  id="e-hero"
-                  className={adminInput}
-                  placeholder="https://..."
-                  value={form.hero_image_url}
-                  onChange={(changeEvent) => update('hero_image_url', changeEvent.target.value)}
-                />
-              </FormRow>
+            <div className="grid gap-5 sm:grid-cols-2">
+              <ImageUploader
+                label="Event logo"
+                folder="events"
+                owner={form.id ?? 'new'}
+                aspect="square"
+                value={form.logo_url || null}
+                onUploaded={uploads.track}
+                onChange={(next) => update('logo_url', next ?? '')}
+              />
+              <ImageUploader
+                label="Hero image"
+                folder="events"
+                owner={form.id ?? 'new'}
+                value={form.hero_image_url || null}
+                onUploaded={uploads.track}
+                onChange={(next) => update('hero_image_url', next ?? '')}
+                hint="Wide banner behind the storefront title."
+              />
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">

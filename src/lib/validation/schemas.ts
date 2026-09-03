@@ -77,8 +77,32 @@ const slugSchema = z
   .max(80)
   .regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, 'Use lowercase letters, numbers and hyphens.');
 
-const optionalUrl = z
-  .union([z.url(), z.literal('')])
+/**
+ * A stored image reference. Three shapes are valid, matching `resolveImageUrl`:
+ *   - `restaurants/<owner>/<uuid>.jpg` — an object uploaded to the bucket
+ *   - `/menu/kfc-logo.jpg`             — a file shipped in /public
+ *   - `https://…`                      — a URL stored before uploads existed
+ *
+ * Anything else is rejected, which keeps `javascript:` and `data:` values out
+ * of the image columns entirely.
+ */
+const STORAGE_OBJECT =
+  /^(restaurants|menu-items|events)\/[a-z0-9-]{1,64}\/[a-f0-9-]{36}\.(jpg|jpeg|png|webp)$/;
+const PUBLIC_ASSET = /^\/[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/;
+const HTTP_URL = /^https?:\/\/[^\s<>"']+$/i;
+
+const imageReference = z
+  .union([
+    z.literal(''),
+    z
+      .string()
+      .trim()
+      .max(500)
+      .refine(
+        (value) => STORAGE_OBJECT.test(value) || PUBLIC_ASSET.test(value) || HTTP_URL.test(value),
+        'That is not a valid image reference.',
+      ),
+  ])
   .optional()
   .nullable();
 
@@ -90,8 +114,8 @@ export const eventFormSchema = z
     slug: slugSchema,
     description_en: z.string().trim().max(2000).optional().nullable(),
     description_ar: z.string().trim().max(2000).optional().nullable(),
-    logo_url: optionalUrl,
-    hero_image_url: optionalUrl,
+    logo_url: imageReference,
+    hero_image_url: imageReference,
     order_prefix: z
       .string()
       .trim()
@@ -115,8 +139,8 @@ export const restaurantFormSchema = z.object({
   description_ar: z.string().trim().max(2000).optional().nullable(),
   cuisine_en: z.string().trim().max(80).optional().nullable(),
   cuisine_ar: z.string().trim().max(80).optional().nullable(),
-  logo_url: optionalUrl,
-  cover_image_url: optionalUrl,
+  logo_url: imageReference,
+  cover_image_url: imageReference,
   display_order: z.coerce.number().int().min(0).max(9999),
   status: z.enum(['active', 'disabled']),
   event_ids: z.array(z.uuid()).default([]),
@@ -139,7 +163,7 @@ export const menuItemFormSchema = z.object({
   description_en: z.string().trim().max(1000).optional().nullable(),
   description_ar: z.string().trim().max(1000).optional().nullable(),
   price: z.coerce.number().min(0, 'Price cannot be negative.').max(100000),
-  image_url: optionalUrl,
+  image_url: imageReference,
   is_available: z.coerce.boolean(),
   display_order: z.coerce.number().int().min(0).max(9999),
 });

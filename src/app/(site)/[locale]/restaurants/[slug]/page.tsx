@@ -1,4 +1,4 @@
-import Image from 'next/image';
+import { MediaImage } from '@/components/ui/MediaImage';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getLocaleContext } from '@/lib/i18n/server';
@@ -47,13 +47,13 @@ export default async function RestaurantPage({
       {/* ------------------------------------------------------------ header */}
       <section className="relative isolate overflow-hidden bg-brand-900 text-white">
         {restaurant.cover_image_url && (
-          <Image
-            src={restaurant.cover_image_url}
+          <MediaImage
+            reference={restaurant.cover_image_url}
             alt=""
-            fill
+            kind="restaurant"
             priority
             sizes="100vw"
-            className="object-cover opacity-40"
+            imageClassName="opacity-40"
           />
         )}
         <div

@@ -39,9 +39,9 @@ describe('translations', () => {
   });
 
   it('resolves bilingual database columns', () => {
-    const row = { name_en: 'Burger House', name_ar: 'برجر هاوس' };
-    expect(localized(row, 'name', 'en')).toBe('Burger House');
-    expect(localized(row, 'name', 'ar')).toBe('برجر هاوس');
+    const row = { name_en: 'KFC', name_ar: 'كنتاكي' };
+    expect(localized(row, 'name', 'en')).toBe('KFC');
+    expect(localized(row, 'name', 'ar')).toBe('كنتاكي');
     expect(localized({ name_en: 'Only English' }, 'name', 'ar')).toBe('Only English');
   });
 

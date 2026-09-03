@@ -68,8 +68,11 @@ try {
   const seeded = rows[0];
   check('seed applied', true);
   check(
-    `seeded 1 event / 4 restaurants / ${seeded.categories} categories / ${seeded.items} items`,
-    Number(seeded.events) === 1 && Number(seeded.restaurants) === 4 && Number(seeded.items) > 10,
+    `seeded 1 event / ${seeded.restaurants} restaurant / ${seeded.categories} categories / ${seeded.items} items`,
+    Number(seeded.events) === 1 &&
+      Number(seeded.restaurants) === 1 &&
+      Number(seeded.categories) === 3 &&
+      Number(seeded.items) === 15,
     JSON.stringify(seeded),
   );
 
@@ -93,22 +96,55 @@ const one = async (sql, params = []) => (await db.query(sql, params)).rows[0];
 const userA = await uid('966551110001');
 const userB = await uid('966551110002');
 
-const burgerHouse = await one(`select id from public.restaurants where slug = 'burger-house'`);
-const coffeeLab = await one(`select id from public.restaurants where slug = 'coffee-lab'`);
-const burger = await one(
-  `select id, price from public.menu_items where name_en = 'Classic Beef Burger'`,
+// The seeded restaurant and two of its items.
+const kfc = await one(`select id from public.restaurants where slug = 'kfc'`);
+const twister = await one(
+  `select id, price from public.menu_items where name_en = 'Twister Combo'`,
 );
-const wagyu = await one(`select id, price from public.menu_items where name_en = 'Lamb Mandi'`);
-const tiramisu = await one(`select id from public.menu_items where name_en = 'Tiramisu'`);
-const saudiBites = await one(`select id from public.restaurants where slug = 'saudi-bites'`);
+const fries = await one(`select id, price from public.menu_items where name_en = 'Fries (Medium)'`);
+
+// Fixtures owned by this script, so the checks do not depend on which menu is
+// seeded: a disabled restaurant, a second active restaurant, and a sold-out item.
+const eventId = (await one(`select id from public.events where slug = 'leap-riyadh'`)).id;
+
+async function makeRestaurant(slug, status) {
+  const r = await one(
+    `insert into public.restaurants (slug, name_en, name_ar, status)
+     values ($1, $2, $2, $3) returning id`,
+    [slug, `Fixture ${slug}`, status],
+  );
+  await db.query(`insert into public.event_restaurants (event_id, restaurant_id) values ($1, $2)`, [
+    eventId,
+    r.id,
+  ]);
+  return r;
+}
+async function makeItem(restaurantId, name, price, available = true) {
+  return one(
+    `insert into public.menu_items (restaurant_id, name_en, name_ar, price, is_available)
+     values ($1, $2, $2, $3, $4) returning id, price`,
+    [restaurantId, name, price, available],
+  );
+}
+
+const closedRestaurant = await makeRestaurant('fixture-closed', 'disabled');
+const closedItem = await makeItem(closedRestaurant.id, 'Fixture Closed Item', 25);
+const otherRestaurant = await makeRestaurant('fixture-other', 'active');
+const otherItem = await makeItem(otherRestaurant.id, 'Fixture Other Item', 30);
+const otherCategory = await one(
+  `insert into public.menu_categories (restaurant_id, name_en, name_ar)
+   values ($1, 'Fixture Category', 'Fixture Category') returning id`,
+  [otherRestaurant.id],
+);
+const soldOutItem = await makeItem(kfc.id, 'Fixture Sold Out', 20, false);
 
 const place = (overrides = {}) => {
   const args = {
     p_auth_user_id: userA,
     p_phone: '+966551110001',
     p_event_slug: 'leap-riyadh',
-    p_restaurant_id: burgerHouse.id,
-    p_menu_item_id: burger.id,
+    p_restaurant_id: kfc.id,
+    p_menu_item_id: twister.id,
     p_name: 'Test Guest',
     p_email: 'guest@example.com',
     ...overrides,
@@ -144,12 +180,11 @@ console.log('\nOne order per customer per event');
   );
   check(
     'price comes from the database',
-    Number(payload.order.unit_price) === Number(burger.price),
-    `${payload.order.unit_price} vs ${burger.price}`,
+    Number(payload.order.unit_price) === Number(twister.price),
+    `${payload.order.unit_price} vs ${twister.price}`,
   );
 
-  const second = (await place({ p_menu_item_id: wagyu.id, p_restaurant_id: saudiBites.id })).rows[0]
-    .result;
+  const second = (await place({ p_menu_item_id: fries.id })).rows[0].result;
   check('a second order is refused as duplicate', second.result === 'duplicate');
   check(
     'the duplicate response returns the original order',
@@ -168,27 +203,29 @@ console.log('\nOne order per customer per event');
   const attempts = await one(
     `select count(*) as n from public.admin_audit_logs where action = 'order.duplicate_attempt'`,
   );
-  check('duplicate attempts are recorded for staff', Number(attempts.n) === 2, `found ${attempts.n}`);
+  check(
+    'duplicate attempts are recorded for staff',
+    Number(attempts.n) === 2,
+    `found ${attempts.n}`,
+  );
 }
 
 console.log('\nServer-side validation');
 await expectError('disabled restaurant is refused', 'RESTAURANT_DISABLED', {
   p_auth_user_id: userB,
   p_phone: '+966551110002',
-  p_restaurant_id: coffeeLab.id,
-  p_menu_item_id: (await one(`select id from public.menu_items where name_en = 'Saudi Qahwa'`)).id,
+  p_restaurant_id: closedRestaurant.id,
+  p_menu_item_id: closedItem.id,
 });
 await expectError('unavailable item is refused', 'ITEM_UNAVAILABLE', {
   p_auth_user_id: userB,
   p_phone: '+966551110002',
-  p_restaurant_id: (await one(`select id from public.restaurants where slug = 'italian-kitchen'`))
-    .id,
-  p_menu_item_id: tiramisu.id,
+  p_menu_item_id: soldOutItem.id,
 });
 await expectError('item from another restaurant is refused', 'ITEM_RESTAURANT_MISMATCH', {
   p_auth_user_id: userB,
   p_phone: '+966551110002',
-  p_menu_item_id: wagyu.id,
+  p_menu_item_id: otherItem.id,
 });
 await expectError('unverified caller is refused', 'NOT_VERIFIED', { p_auth_user_id: null });
 await expectError('non-Saudi phone is refused', 'INVALID_PHONE', {
@@ -231,7 +268,7 @@ console.log('\nDatabase constraints');
   await violates(
     'a negative price is rejected',
     `insert into public.menu_items (restaurant_id, name_en, name_ar, price)
-     values ('${burgerHouse.id}', 'Bad', 'سيء', -1)`,
+     values ('${kfc.id}', 'Bad', 'سيء', -1)`,
   );
   await violates(
     'a non-Saudi phone is rejected by the customers table',
@@ -246,10 +283,7 @@ console.log('\nDatabase constraints');
   await violates(
     'a menu item cannot use another restaurant’s category',
     `insert into public.menu_items (restaurant_id, category_id, name_en, name_ar, price)
-     select '${burgerHouse.id}', c.id, 'Bad', 'سيء', 10
-     from public.menu_categories c
-     join public.restaurants r on r.id = c.restaurant_id
-     where r.slug = 'italian-kitchen' limit 1`,
+     values ('${kfc.id}', '${otherCategory.id}', 'Bad', 'سيء', 10)`,
   );
 
   const { rows: constraint } = await db.query(`
@@ -294,9 +328,7 @@ console.log('\nStatus history and notifications');
   const stillThere = await one('select count(*) as n from public.orders where id = $1', [order.id]);
   check('cancelled orders stay in history', Number(stillThere.n) === 1);
 
-  await db.query(`update public.restaurants set status = 'disabled' where id = $1`, [
-    burgerHouse.id,
-  ]);
+  await db.query(`update public.restaurants set status = 'disabled' where id = $1`, [kfc.id]);
   const disabledNotice = await one(
     `select count(*) as n from public.notifications where type = 'restaurant.disabled'`,
   );
@@ -304,7 +336,7 @@ console.log('\nStatus history and notifications');
 
   const ordersIntact = await one(
     'select count(*) as n from public.orders where restaurant_id = $1',
-    [burgerHouse.id],
+    [kfc.id],
   );
   check('existing orders survive the restaurant being disabled', Number(ordersIntact.n) === 1);
 }

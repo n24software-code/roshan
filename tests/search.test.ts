@@ -3,24 +3,26 @@ import { matchesQuery, normalizeForSearch } from '@/lib/search';
 
 describe('menu search', () => {
   it('matches English names case-insensitively', () => {
-    expect(matchesQuery('burger', 'Classic Beef Burger')).toBe(true);
-    expect(matchesQuery('BEEF', 'Classic Beef Burger')).toBe(true);
-    expect(matchesQuery('pizza', 'Classic Beef Burger')).toBe(false);
+    expect(matchesQuery('zinger', 'Mighty Zinger Combo')).toBe(true);
+    expect(matchesQuery('ZINGER', 'Mighty Zinger Combo')).toBe(true);
+    expect(matchesQuery('pizza', 'Mighty Zinger Combo')).toBe(false);
   });
 
   it('requires every term to match', () => {
-    expect(matchesQuery('beef burger', 'Classic Beef Burger')).toBe(true);
-    expect(matchesQuery('beef pizza', 'Classic Beef Burger')).toBe(false);
+    expect(matchesQuery('mighty zinger', 'Mighty Zinger Combo')).toBe(true);
+    expect(matchesQuery('mighty pizza', 'Mighty Zinger Combo')).toBe(false);
   });
 
   it('matches Arabic despite hamza, ta marbuta and alef variants', () => {
-    expect(matchesQuery('كبسه', 'كبسة دجاج')).toBe(true);
-    expect(matchesQuery('كبسة', 'كبسة دجاج')).toBe(true);
+    expect(matchesQuery('وجبه', 'وجبة زنجر')).toBe(true);
+    expect(matchesQuery('وجبة', 'وجبة زنجر')).toBe(true);
     expect(matchesQuery('احمد', 'أحمد')).toBe(true);
   });
 
   it('searches descriptions as well as names', () => {
-    expect(matchesQuery('cheddar', 'Classic Beef Burger', 'Grilled patty with cheddar')).toBe(true);
+    expect(matchesQuery('cheese', 'Mighty Zinger Combo', 'Double Zinger fillets with cheese')).toBe(
+      true,
+    );
   });
 
   it('treats an empty query as matching everything', () => {

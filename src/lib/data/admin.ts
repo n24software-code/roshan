@@ -57,7 +57,7 @@ export type AdminOrder = OrderRow & {
   customers: {
     id: string;
     name: string;
-    email: string;
+    email: string | null;
     phone: string;
     phone_verified: boolean;
   } | null;
@@ -193,7 +193,7 @@ export async function getEvents(supabase: Client) {
 export type AdminCustomer = {
   id: string;
   name: string;
-  email: string;
+  email: string | null;
   phone: string;
   phone_verified: boolean;
   created_at: string;

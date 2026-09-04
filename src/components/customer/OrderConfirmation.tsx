@@ -2,106 +2,64 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { createClient } from '@/lib/supabase/client';
 import { createTranslator, formatPrice, localized } from '@/lib/i18n';
 import type { Locale } from '@/lib/i18n/config';
+import { getMyOrderStatus } from '@/lib/orders/actions';
 import { orderStore } from '@/lib/selection';
-import type { OrderRow, OrderStatus, RestaurantRow } from '@/types/database';
+import type { OrderPayload, OrderStatus } from '@/types/database';
 import { StatusTimeline } from './StatusTimeline';
 import { OrderQr } from './OrderQr';
 import { Alert } from '@/components/ui/Alert';
-import { Skeleton } from '@/components/ui/Skeleton';
 import { buttonClass } from '@/components/ui/Button';
 
-type OrderView = OrderRow & { restaurants: Pick<RestaurantRow, 'name_en' | 'name_ar'> | null };
+/** How often the confirmation screen refreshes the order's status. */
+const POLL_INTERVAL_MS = 15_000;
 
 /**
  * Confirmation and live tracking.
  *
- * The order is read with the guest's own session under RLS, so a guessed order
- * number reveals nothing — only the customer who placed it can load it.
+ * The order arrives already resolved from the server, where it was read through
+ * the verified-phone session rather than a Supabase auth session — so nothing
+ * here depends on the browser holding a database session, and an order number
+ * typed into the URL by someone else resolves to nothing.
  */
 export function OrderConfirmation({
   locale,
   orderNumber,
   duplicate,
-  customerName,
+  order,
 }: {
   locale: Locale;
   orderNumber: string;
   duplicate: boolean;
-  customerName?: string;
+  order: OrderPayload | null;
 }) {
   const t = createTranslator(locale);
-  const [order, setOrder] = useState<OrderView | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [name, setName] = useState(customerName ?? '');
+  const [status, setStatus] = useState<OrderStatus | null>(order?.status ?? null);
 
   useEffect(() => {
-    const supabase = createClient();
-    let channel: ReturnType<typeof supabase.channel> | null = null;
+    if (!order) return;
+    orderStore.set(order.order_number);
+
     let cancelled = false;
+    const tick = async () => {
+      const latest = await getMyOrderStatus();
+      if (!cancelled && latest?.orderNumber === order.order_number) setStatus(latest.status);
+    };
 
-    async function load() {
-      const { data } = await supabase
-        .from('orders')
-        .select('*, restaurants(name_en, name_ar)')
-        .eq('order_number', orderNumber)
-        .maybeSingle();
-
-      if (cancelled) return;
-
-      const row = (data as OrderView | null) ?? null;
-      setOrder(row);
-      setLoading(false);
-
-      if (!row) return;
-      orderStore.set(row.order_number);
-
-      const { data: customer } = await supabase
-        .from('customers')
-        .select('name')
-        .eq('id', row.customer_id)
-        .maybeSingle();
-      if (!cancelled && customer?.name) setName(customer.name);
-
-      // Live status updates while the guest keeps the page open.
-      channel = supabase
-        .channel(`order-${row.id}`)
-        .on(
-          'postgres_changes',
-          { event: 'UPDATE', schema: 'public', table: 'orders', filter: `id=eq.${row.id}` },
-          (payload) => {
-            const next = payload.new as OrderRow;
-            setOrder((current) => (current ? { ...current, ...next } : current));
-          },
-        )
-        .subscribe();
-    }
-
-    void load();
-
+    const timer = setInterval(() => void tick(), POLL_INTERVAL_MS);
     return () => {
       cancelled = true;
-      if (channel) void supabase.removeChannel(channel);
+      clearInterval(timer);
     };
-  }, [orderNumber]);
-
-  if (loading) {
-    return (
-      <div className="space-y-4">
-        <Skeleton className="h-8 w-1/2" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-48 w-full" />
-      </div>
-    );
-  }
+  }, [order]);
 
   if (!order) {
     return (
       <div className="space-y-5 text-center">
         <h1 className="text-2xl font-extrabold text-ink-900">{t('confirmation.notFound.title')}</h1>
         <p className="text-ink-500">{t('confirmation.notFound.body')}</p>
+        <p className="numeric text-sm text-ink-400">{orderNumber}</p>
         <Link href={`/${locale}`} className={buttonClass('primary', 'md')}>
           {t('confirmation.notFound.cta')}
         </Link>
@@ -109,8 +67,10 @@ export function OrderConfirmation({
     );
   }
 
-  const restaurantName = order.restaurants ? localized(order.restaurants, 'name', locale) : '';
-  const itemName = locale === 'ar' ? order.item_name_ar : order.item_name_en;
+  const currentStatus = status ?? order.status;
+  const restaurantName = localized(order.restaurant, 'name', locale);
+  const itemName = locale === 'ar' ? order.item.name_ar : order.item.name_en;
+  const name = order.customer.name;
 
   return (
     <div className="space-y-8">
@@ -169,10 +129,10 @@ export function OrderConfirmation({
           value={formatPrice(Number(order.unit_price), locale)}
           numeric
         />
-        <Row label={t('confirmation.status')} value={t(`status.${order.status as OrderStatus}`)} />
+        <Row label={t('confirmation.status')} value={t(`status.${currentStatus}`)} />
       </dl>
 
-      {order.status === 'cancelled' && order.cancel_reason && (
+      {currentStatus === 'cancelled' && order.cancel_reason && (
         <Alert tone="error">{order.cancel_reason}</Alert>
       )}
 
@@ -182,7 +142,7 @@ export function OrderConfirmation({
           {t('confirmation.trackTitle')}
         </h2>
         <div className="mt-5">
-          <StatusTimeline status={order.status} locale={locale} />
+          <StatusTimeline status={currentStatus} locale={locale} />
         </div>
       </section>
 

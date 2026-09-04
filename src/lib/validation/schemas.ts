@@ -30,42 +30,38 @@ export const emailSchema = z
   .max(254, 'email_invalid')
   .regex(/^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$/, 'email_invalid');
 
-export const otpCodeSchema = z
-  .string()
-  .trim()
-  .regex(/^[0-9]{6}$/, 'otp_invalid');
-
 const uuidSchema = z.uuid('invalid_selection');
 
-/** Details collected on the customer information screen. */
-export const customerDetailsSchema = z.object({
+const eventSlugSchema = z.string().trim().min(1, 'invalid_selection').max(80);
+
+/**
+ * What an attendee tells us about themselves. No account, no password, no
+ * email: a name to hand the order over by, and the number that identifies them.
+ */
+export const attendeeDetailsSchema = z.object({
   name: customerNameSchema,
-  email: emailSchema,
   phone: saudiPhoneSchema,
 });
-export type CustomerDetailsInput = z.input<typeof customerDetailsSchema>;
-export type CustomerDetails = z.output<typeof customerDetailsSchema>;
+export type AttendeeDetailsInput = z.input<typeof attendeeDetailsSchema>;
+export type AttendeeDetails = z.output<typeof attendeeDetailsSchema>;
 
-export const sendOtpSchema = customerDetailsSchema;
-
-export const verifyOtpSchema = z.object({
-  phone: saudiPhoneSchema,
-  code: otpCodeSchema,
+/** Starting verification: the attendee's details plus the event they are at. */
+export const startVerificationSchema = attendeeDetailsSchema.extend({
+  eventSlug: eventSlugSchema,
 });
 
 /**
  * Order submission. Ids are lookup keys only — the server re-reads the event,
- * restaurant, item and price from the database before creating anything.
+ * restaurant, item and price from the database before creating anything, and
+ * takes the name and phone from the verification record rather than the form.
  * There is deliberately no price field: the client cannot influence it.
  */
-export const placeOrderSchema = z.object({
-  eventSlug: z.string().trim().min(1, 'invalid_selection'),
+export const submitOrderSchema = z.object({
+  eventSlug: eventSlugSchema,
   restaurantId: uuidSchema,
   menuItemId: uuidSchema,
-  name: customerNameSchema,
-  email: emailSchema,
 });
-export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
+export type SubmitOrderInput = z.infer<typeof submitOrderSchema>;
 
 // ---------------------------------------------------------------- admin forms
 

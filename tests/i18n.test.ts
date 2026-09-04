@@ -29,7 +29,7 @@ describe('translations', () => {
 
   it('interpolates values', () => {
     const t = createTranslator('en');
-    expect(t('otp.resendIn', { seconds: 12 })).toContain('12');
+    expect(t('verify.resendIn', { seconds: 12 })).toContain('12');
     expect(t('confirmation.thanks', { name: 'Hamid' })).toContain('Hamid');
   });
 

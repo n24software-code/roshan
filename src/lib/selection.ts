@@ -20,9 +20,14 @@ export interface StoredSelection {
 
 export interface PendingDetails {
   name: string;
-  email: string;
   phone: string;
   menuItemId: string;
+  /** When the one-time code stops being accepted (ISO 8601). */
+  expiresAt: string;
+  /** Deep link that opens WhatsApp with the verification message prefilled. */
+  whatsappUrl: string | null;
+  /** Development provider only: the message the simulate button replays. */
+  developmentMessage?: { from: string; text: string };
 }
 
 const SELECTION_KEY = 'event-order:selection';
@@ -109,7 +114,7 @@ function createStore<T>(area: Area, key: string) {
 
 export const selectionStore = createStore<StoredSelection>('local', SELECTION_KEY);
 
-/** Name/email/phone held only for the verification step, in session storage. */
+/** Name and phone held only for the verification step, in session storage. */
 export const detailsStore = createStore<PendingDetails>('session', DETAILS_KEY);
 
 /** The confirmed order number, so refreshing the confirmation page still works. */

@@ -29,7 +29,7 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     { label: 'Customer', value: order.customers?.name ?? '—' },
     {
       label: 'Email',
-      value: order.customers ? (
+      value: order.customers?.email ? (
         <a
           href={`mailto:${order.customers.email}`}
           className="text-brand-700 underline underline-offset-4"

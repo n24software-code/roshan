@@ -62,6 +62,7 @@ describeLive('order placement rules', () => {
       .eq('type', 'restaurant.disabled')
       .like('body', `%${SUFFIX}%`);
 
+    await admin.from('phone_verifications').delete().in('phone', [PHONE, SECOND_PHONE]);
     await admin.from('admin_audit_logs').delete().in('meta->>phone', [PHONE, SECOND_PHONE]);
   }
 
@@ -344,6 +345,159 @@ describeLive('order placement rules', () => {
   });
 });
 
+describeLive('verified phone ordering', () => {
+  let admin: SupabaseClient;
+  const ids = { event: '', restaurant: '', item: '', otherItem: '' };
+
+  // Hashes are opaque to the database: it only ever compares them.
+  const CODE_HASH = 'integration-code-hash';
+  const TOKEN_HASH = 'integration-token-hash';
+
+  async function cleanup() {
+    const { data: customers } = await admin.from('customers').select('id').eq('phone', PHONE);
+    for (const customer of customers ?? []) {
+      await admin.from('orders').delete().eq('customer_id', customer.id);
+    }
+    await admin.from('customers').delete().eq('phone', PHONE);
+    await admin.from('phone_verifications').delete().eq('phone', PHONE);
+    await admin.from('restaurants').delete().eq('slug', `verified-${SUFFIX}`);
+    await admin.from('events').delete().eq('slug', `verified-event-${SUFFIX}`);
+  }
+
+  beforeAll(async () => {
+    admin = createClient(url!, serviceKey!, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    await cleanup();
+
+    const { data: event } = await admin
+      .from('events')
+      .insert({
+        slug: `verified-event-${SUFFIX}`,
+        name_en: 'Verified Event',
+        name_ar: 'Verified Event',
+        order_prefix: 'V',
+        status: 'active',
+      })
+      .select('id')
+      .single();
+    ids.event = event!.id as string;
+
+    const { data: restaurant } = await admin
+      .from('restaurants')
+      .insert({ slug: `verified-${SUFFIX}`, name_en: 'V', name_ar: 'V', status: 'active' })
+      .select('id')
+      .single();
+    ids.restaurant = restaurant!.id as string;
+
+    await admin
+      .from('event_restaurants')
+      .insert({ event_id: ids.event, restaurant_id: ids.restaurant });
+
+    const insertItem = async (name: string, price: number) => {
+      const { data } = await admin
+        .from('menu_items')
+        .insert({ restaurant_id: ids.restaurant, name_en: name, name_ar: name, price })
+        .select('id')
+        .single();
+      return data!.id as string;
+    };
+
+    ids.item = await insertItem('Verified Item', 45);
+    ids.otherItem = await insertItem('Verified Item 2', 90);
+
+    await admin.rpc('request_phone_verification', {
+      p_event_slug: `verified-event-${SUFFIX}`,
+      p_phone: PHONE,
+      p_name: 'Hamid',
+      p_code_hash: CODE_HASH,
+      p_token_hash: TOKEN_HASH,
+    });
+  }, 60_000);
+
+  afterAll(async () => {
+    if (!live) return;
+    await cleanup();
+  }, 60_000);
+
+  const submit = (menuItemId = ids.item) =>
+    admin.rpc('place_verified_order', {
+      p_token_hash: TOKEN_HASH,
+      p_event_slug: `verified-event-${SUFFIX}`,
+      p_restaurant_id: ids.restaurant,
+      p_menu_item_id: menuItemId,
+    });
+
+  it('refuses to order while the number is only pending', async () => {
+    const { error } = await submit();
+    expect(error?.message).toContain('NOT_VERIFIED');
+  });
+
+  it('verifies only when the code arrives from the matching number', async () => {
+    const wrongNumber = await admin.rpc('confirm_phone_verification', {
+      p_phone: SECOND_PHONE,
+      p_code_hash: CODE_HASH,
+    });
+    expect(wrongNumber.data.result).toBe('no_match');
+
+    const right = await admin.rpc('confirm_phone_verification', {
+      p_phone: PHONE,
+      p_code_hash: CODE_HASH,
+    });
+    expect(right.data.result).toBe('verified');
+
+    // The code is destroyed on use, so the same message cannot verify twice.
+    const replay = await admin.rpc('confirm_phone_verification', {
+      p_phone: PHONE,
+      p_code_hash: CODE_HASH,
+    });
+    expect(replay.data.result).toBe('no_match');
+  });
+
+  it('lets only one of three simultaneous submissions win', async () => {
+    const results = await Promise.all([submit(), submit(ids.otherItem), submit()]);
+
+    expect(results.filter((r) => r.data?.result === 'created')).toHaveLength(1);
+    expect(results.filter((r) => r.data?.result === 'duplicate')).toHaveLength(2);
+
+    const { count } = await admin
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', ids.event);
+    expect(count).toBe(1);
+  }, 30_000);
+
+  it('stores the normalized phone on the order itself', async () => {
+    const { data } = await admin
+      .from('orders')
+      .select('customer_phone')
+      .eq('event_id', ids.event)
+      .single();
+    expect(data!.customer_phone).toBe(PHONE);
+  });
+
+  it('refuses a direct duplicate insert at the constraint', async () => {
+    const { data: existing } = await admin
+      .from('orders')
+      .select('*')
+      .eq('event_id', ids.event)
+      .single();
+
+    const { error } = await admin.from('orders').insert({
+      order_number: `V-DUP-${Date.now()}`,
+      event_id: existing!.event_id,
+      customer_id: existing!.customer_id,
+      restaurant_id: existing!.restaurant_id,
+      menu_item_id: existing!.menu_item_id,
+      unit_price: 1,
+      item_name_en: 'x',
+      item_name_ar: 'x',
+    });
+
+    expect(error).not.toBeNull();
+  });
+});
+
 describeLive('row level security', () => {
   const anon = publicKey
     ? createClient(url!, publicKey, { auth: { persistSession: false } })
@@ -395,6 +549,43 @@ describeLive('row level security', () => {
       p_email: 'a@b.com',
     });
     expect(error).not.toBeNull();
+  });
+
+  it('never exposes verification records to an anonymous visitor', async () => {
+    if (!anon) return;
+    const { data } = await anon.from('phone_verifications').select('*');
+    expect(data ?? []).toHaveLength(0);
+  });
+
+  it('does not let an anonymous visitor call the verification functions', async () => {
+    if (!anon) return;
+
+    for (const [fn, args] of [
+      [
+        'request_phone_verification',
+        {
+          p_event_slug: EVENT_SLUG,
+          p_phone: PHONE,
+          p_name: 'Attacker',
+          p_code_hash: 'x',
+          p_token_hash: 'x',
+        },
+      ],
+      ['confirm_phone_verification', { p_phone: PHONE, p_code_hash: 'x' }],
+      ['verification_session', { p_token_hash: 'x' }],
+      [
+        'place_verified_order',
+        {
+          p_token_hash: 'x',
+          p_event_slug: EVENT_SLUG,
+          p_restaurant_id: '00000000-0000-4000-8000-000000000000',
+          p_menu_item_id: '00000000-0000-4000-8000-000000000000',
+        },
+      ],
+    ] as const) {
+      const { error } = await anon.rpc(fn, args as never);
+      expect(error, fn).not.toBeNull();
+    }
   });
 
   it('reports no admin role for an anonymous session', async () => {

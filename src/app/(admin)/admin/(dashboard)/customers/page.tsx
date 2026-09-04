@@ -64,12 +64,16 @@ export default async function CustomersPage({
           <tr key={customer.id} className="hover:bg-sand-50">
             <Td className="font-semibold text-ink-900">{customer.name}</Td>
             <Td>
-              <a
-                href={`mailto:${customer.email}`}
-                className="text-brand-700 underline underline-offset-4"
-              >
-                {customer.email}
-              </a>
+              {customer.email ? (
+                <a
+                  href={`mailto:${customer.email}`}
+                  className="text-brand-700 underline underline-offset-4"
+                >
+                  {customer.email}
+                </a>
+              ) : (
+                <span className="text-ink-400">—</span>
+              )}
             </Td>
             <Td className="numeric whitespace-nowrap">{formatSaudiPhone(customer.phone)}</Td>
             <Td>

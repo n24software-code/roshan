@@ -27,10 +27,22 @@
     "restaurantsSubtitle": "One order per guest. Choose the kitchen you would like to eat from.",
     "howTitle": "How it works",
     "steps": {
-      "one": { "title": "Choose a restaurant", "body": "Browse the kitchens taking part in this event." },
-      "two": { "title": "Pick one dish", "body": "Each guest orders a single item." },
-      "three": { "title": "Verify your mobile", "body": "We send a 6-digit code to your Saudi number." },
-      "four": { "title": "Collect your order", "body": "Show your order number at the counter." }
+      "one": {
+        "title": "Choose a restaurant",
+        "body": "Browse the kitchens taking part in this event."
+      },
+      "two": {
+        "title": "Pick one dish",
+        "body": "Each guest orders a single item."
+      },
+      "three": {
+        "title": "Verify your mobile",
+        "body": "We send a 6-digit code to your Saudi number."
+      },
+      "four": {
+        "title": "Collect your order",
+        "body": "Show your order number at the counter."
+      }
     },
     "noEvent": {
       "title": "No event is running",
@@ -71,32 +83,41 @@
   },
   "details": {
     "title": "Complete Your Order",
-    "subtitle": "We need your details so event staff can hand over your order.",
+    "subtitle": "We need your name and mobile number so event staff can hand over your order.",
     "name": "Full Name",
     "namePlaceholder": "Your full name",
-    "email": "Email Address",
-    "emailPlaceholder": "you@example.com",
     "phone": "Saudi Mobile Number",
-    "phoneHint": "We will send a 6-digit verification code to this number.",
+    "phoneHint": "You will confirm this number on WhatsApp.",
     "countryCode": "Saudi Arabia (+966)",
-    "submit": "Verify Phone Number",
-    "submitting": "Sending code...",
+    "submit": "Continue",
+    "submitting": "Preparing verification...",
     "privacy": "Your details are used only for this event order."
   },
-  "otp": {
+  "verify": {
     "title": "Verify Your Mobile Number",
-    "subtitle": "We sent a 6-digit verification code to",
-    "codeLabel": "Verification code",
-    "digitLabel": "Digit {index}",
-    "verify": "Verify",
-    "verifying": "Verifying...",
-    "noCode": "Didn't receive the code?",
-    "resend": "Resend code",
-    "resendIn": "Resend code in {seconds} seconds",
-    "sent": "Verification code sent to {phone}",
-    "verified": "Phone number verified",
+    "subtitle": "Confirm ownership of this number on WhatsApp to continue:",
+    "statusLabel": "Verification status",
+    "statusWaiting": "Waiting for verification",
+    "statusVerified": "Phone number verified",
+    "statusExpired": "Verification expired",
+    "statusFailed": "Verification failed",
+    "step1": "Tap the button below — WhatsApp opens with the message already written.",
+    "step2": "Send the message from the number shown above, without changing it.",
+    "step3": "Come back to this page. It continues on its own.",
+    "openWhatsapp": "Verify via WhatsApp",
+    "afterSending": "Message sent? This page will continue automatically.",
+    "expiresIn": "Verification code expires in {time}",
+    "noMessage": "Message not going through?",
+    "resend": "Start a new verification",
+    "resendIn": "You can start again in {seconds} seconds",
+    "resent": "A new verification code is ready.",
+    "simulated": "Message delivered to the webhook.",
     "changeNumber": "Change number",
-    "creatingOrder": "Submitting order..."
+    "creatingOrder": "Verified. Submitting your order...",
+    "retryOrder": "Try submitting again",
+    "devTitle": "Development mode",
+    "devBody": "WhatsApp is not configured here. Replay the message through the webhook to continue.",
+    "devButton": "Simulate WhatsApp message"
   },
   "confirmation": {
     "title": "Order Confirmed",
@@ -130,16 +151,19 @@
     "email_invalid": "Please enter a valid email address.",
     "phone_required": "Please enter your mobile number.",
     "phone_invalid": "Please enter a valid Saudi mobile number.",
-    "otp_invalid": "Please enter the 6-digit verification code.",
-    "otp_incorrect": "The verification code is incorrect. Please try again.",
-    "otp_expired": "This verification code has expired. Please request a new code.",
-    "otp_rate_limited": "Too many attempts. Please wait a moment before requesting another code.",
-    "otp_send_failed": "We could not send the verification code. Please try again.",
-    "sms_not_configured": "SMS verification is not configured for this environment.",
+    "verification_required": "Please verify your mobile number first.",
+    "verification_pending": "This number is not verified yet. Send the WhatsApp message to continue.",
+    "verification_expired": "This verification has expired. Please start a new one.",
+    "verification_failed": "Too many failed attempts. Please start a new verification.",
+    "verification_not_configured": "WhatsApp verification is not configured for this environment.",
+    "resend_too_soon": "Please wait a moment before starting another verification.",
+    "otp_rate_limited": "Too many attempts. Please wait a moment before trying again.",
+    "otp_expired": "This verification code has expired. Please start a new verification.",
     "not_verified": "Please verify your mobile number first.",
     "invalid_selection": "Please choose a restaurant and an item again.",
     "event_not_found": "This event is no longer available.",
     "event_inactive": "This event is not accepting orders.",
+    "event_mismatch": "This verification belongs to a different event.",
     "restaurant_not_found": "This restaurant is no longer available.",
     "restaurant_disabled": "This restaurant is currently unavailable.",
     "restaurant_not_in_event": "This restaurant is not taking part in this event.",

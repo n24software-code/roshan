@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapAuthError, mapDatabaseError, ORDER_ERROR_CODES } from '@/lib/orders/errors';
+import { mapDatabaseError, ORDER_ERROR_CODES } from '@/lib/orders/errors';
 import en from '@/messages/en.json';
 import ar from '@/messages/ar.json';
 
@@ -12,6 +12,10 @@ describe('error mapping', () => {
       ['ITEM_RESTAURANT_MISMATCH', 'item_restaurant_mismatch'],
       ['NOT_VERIFIED', 'not_verified'],
       ['INVALID_PHONE', 'phone_invalid'],
+      ['VERIFICATION_EXPIRED', 'verification_expired'],
+      ['EVENT_MISMATCH', 'event_mismatch'],
+      ['RESEND_TOO_SOON', 'resend_too_soon'],
+      ['RATE_LIMITED', 'otp_rate_limited'],
     ];
 
     for (const [sentinel, code] of cases) {
@@ -23,14 +27,9 @@ describe('error mapping', () => {
     expect(mapDatabaseError('connection reset by peer')).toBe('unknown');
   });
 
-  it('distinguishes expired, incorrect and rate-limited OTP failures', () => {
-    expect(mapAuthError('Token has expired')).toBe('otp_expired');
-    expect(mapAuthError('Invalid token provided')).toBe('otp_incorrect');
-    expect(mapAuthError('Email rate limit exceeded', 429)).toBe('otp_rate_limited');
-    expect(mapAuthError('anything', 429)).toBe('otp_rate_limited');
-    expect(mapAuthError('Unsupported phone provider')).toBe('sms_not_configured');
-    // The exact message Supabase returns when Twilio credentials are not set.
-    expect(mapAuthError('Unable to get SMS provider', 500)).toBe('sms_not_configured');
+  it('never leaks a raw database error to the guest', () => {
+    const raw = 'duplicate key value violates unique constraint "orders_one_per_phone_per_event"';
+    expect(mapDatabaseError(raw)).toBe('unknown');
   });
 
   it('has a translation for every error code in both languages', () => {

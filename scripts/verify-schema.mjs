@@ -63,7 +63,13 @@ await db.exec(`
 check('auth schema, roles and realtime publication created', true);
 
 console.log('\nMigrations');
-for (const file of ['0001_init.sql', '0002_functions.sql', '0003_rls.sql', '0004_storage.sql']) {
+for (const file of [
+  '0001_init.sql',
+  '0002_functions.sql',
+  '0003_rls.sql',
+  '0004_storage.sql',
+  '0005_phone_verification.sql',
+]) {
   try {
     await db.exec(read(`supabase/migrations/${file}`));
     check(`${file} applied`, true);
@@ -417,6 +423,341 @@ console.log('\nRow level security');
     where n.nspname = 'public' and p.proname = 'place_order'
   `);
   check('anon cannot execute place_order', grants[0]?.anon_can_call === false);
+}
+
+// =============================================================
+// Phone verification + one verified phone = one order per event
+// =============================================================
+const VPHONE = '+966551110010';
+const VPHONE_2 = '+966551110011';
+const VPHONE_3 = '+966551110012';
+
+// A second event, so the "uniqueness is scoped to the event" rule is testable.
+const secondEvent = await one(
+  `insert into public.events (slug, name_en, name_ar, order_prefix, status)
+   values ('fixture-event-two', 'Fixture Event Two', 'Fixture Event Two', 'B', 'active')
+   returning id`,
+);
+await db.query(`insert into public.event_restaurants (event_id, restaurant_id) values ($1, $2)`, [
+  secondEvent.id,
+  otherRestaurant.id,
+]);
+
+const requestVerification = (overrides = {}) => {
+  const args = {
+    p_event_slug: 'leap-riyadh',
+    p_phone: VPHONE,
+    p_name: 'Hamid',
+    p_code_hash: 'hash-code-1',
+    p_token_hash: 'hash-token-1',
+    p_code_ttl_seconds: 600,
+    p_provider: 'dev',
+    p_resend_cooldown_seconds: 30,
+    p_max_per_hour: 5,
+    ...overrides,
+  };
+  return db.query(
+    `select public.request_phone_verification($1,$2,$3,$4,$5,$6,$7,$8,$9) as result`,
+    [
+      args.p_event_slug,
+      args.p_phone,
+      args.p_name,
+      args.p_code_hash,
+      args.p_token_hash,
+      args.p_code_ttl_seconds,
+      args.p_provider,
+      args.p_resend_cooldown_seconds,
+      args.p_max_per_hour,
+    ],
+  );
+};
+
+const confirm = (phone, codeHash) =>
+  db.query(`select public.confirm_phone_verification($1,$2,'dev',5,21600) as result`, [
+    phone,
+    codeHash,
+  ]);
+
+const sessionOf = async (tokenHash) =>
+  (await one(`select public.verification_session($1) as result`, [tokenHash])).result;
+
+const placeVerified = (tokenHash, overrides = {}) => {
+  const args = {
+    p_event_slug: 'leap-riyadh',
+    p_restaurant_id: otherRestaurant.id,
+    p_menu_item_id: otherItem.id,
+    ...overrides,
+  };
+  return db.query(`select public.place_verified_order($1,$2,$3,$4) as result`, [
+    tokenHash,
+    args.p_event_slug,
+    args.p_restaurant_id,
+    args.p_menu_item_id,
+  ]);
+};
+
+console.log('\nVerification requests');
+{
+  const { rows } = await requestVerification();
+  const payload = rows[0].result;
+  check('a verification request is created', payload.result === 'created', JSON.stringify(payload));
+  check('the request carries an expiry', Boolean(payload.expires_at));
+
+  const stored = await one(
+    `select code_hash, status, attempts from public.phone_verifications where phone = $1`,
+    [VPHONE],
+  );
+  check('only a hash of the code is stored', stored.code_hash === 'hash-code-1');
+  check('the request starts out pending', stored.status === 'pending');
+
+  try {
+    await requestVerification({ p_code_hash: 'hash-code-2', p_token_hash: 'hash-token-2' });
+    check('a second request inside the cooldown is refused', false, 'no error was raised');
+  } catch (error) {
+    check(
+      'a second request inside the cooldown is refused',
+      error.message.includes('RESEND_TOO_SOON'),
+    );
+  }
+
+  try {
+    await requestVerification({ p_phone: '+971501234567' });
+    check('a non-Saudi number cannot request verification', false, 'no error was raised');
+  } catch (error) {
+    check(
+      'a non-Saudi number cannot request verification',
+      error.message.includes('INVALID_PHONE'),
+    );
+  }
+}
+
+console.log('\nCode confirmation');
+{
+  const wrong = (await confirm(VPHONE, 'not-the-code')).rows[0].result;
+  check('a wrong code does not verify', wrong.result === 'no_match');
+
+  const afterWrong = await one(`select attempts from public.phone_verifications where phone = $1`, [
+    VPHONE,
+  ]);
+  check('a wrong code burns an attempt', Number(afterWrong.attempts) === 1);
+
+  const fromAnotherNumber = (await confirm(VPHONE_2, 'hash-code-1')).rows[0].result;
+  check(
+    'the right code sent from another number does not verify',
+    fromAnotherNumber.result === 'no_match',
+  );
+
+  const right = (await confirm(VPHONE, 'hash-code-1')).rows[0].result;
+  check('the right code from the right number verifies', right.result === 'verified');
+
+  const stored = await one(
+    `select code_hash, status, session_expires_at from public.phone_verifications where phone = $1`,
+    [VPHONE],
+  );
+  check('the code hash is destroyed once used', stored.code_hash === null);
+  check('the row is marked verified', stored.status === 'verified');
+  check('a verified session gets an expiry', Boolean(stored.session_expires_at));
+
+  const replay = (await confirm(VPHONE, 'hash-code-1')).rows[0].result;
+  check('the same code cannot be replayed', replay.result === 'no_match');
+
+  const session = await sessionOf('hash-token-1');
+  check('the session cookie resolves to a verified state', session.status === 'verified');
+  check('an unknown cookie resolves to nothing', (await sessionOf('nope')).status === 'none');
+}
+
+console.log('\nOne verified phone = one order per event');
+{
+  const first = (await placeVerified('hash-token-1')).rows[0].result;
+  check('a verified attendee can order', first.result === 'created', JSON.stringify(first));
+  check('the order stores the normalized phone', first.order.customer.phone === VPHONE);
+
+  const again = (await placeVerified('hash-token-1')).rows[0].result;
+  check('a second order for the same event is refused', again.result === 'duplicate');
+  check(
+    'the duplicate response returns the original order',
+    again.order.order_number === first.order.order_number,
+  );
+
+  // A brand new verification for the same number must not open a second door.
+  await db.query(
+    `update public.phone_verifications set created_at = created_at - interval '1 minute'
+     where phone = $1`,
+    [VPHONE],
+  );
+  const reRequest = (
+    await requestVerification({ p_code_hash: 'hash-code-3', p_token_hash: 'hash-token-3' })
+  ).rows[0].result;
+  check(
+    're-verifying a number that already ordered issues a fresh code',
+    reRequest.result === 'created',
+  );
+
+  // ...and that fresh, still-pending session is told nothing about the order.
+  check(
+    'a pending session is never shown an existing order',
+    (await sessionOf('hash-token-3')).order === null,
+  );
+
+  await confirm(VPHONE, 'hash-code-3');
+  check(
+    'once verified again, the guest gets their order number back',
+    (await sessionOf('hash-token-3')).order?.customer?.phone === VPHONE,
+  );
+
+  const { rows: counted } = await db.query(
+    `select count(*) as n from public.orders where customer_phone = $1`,
+    [VPHONE],
+  );
+  check(
+    'exactly one order exists for that number',
+    Number(counted[0].n) === 1,
+    `found ${counted[0].n}`,
+  );
+
+  // The constraint, not the lookup, is what makes this true.
+  const existing = await one(`select * from public.orders where customer_phone = $1`, [VPHONE]);
+  try {
+    await db.query(
+      `insert into public.orders (order_number, event_id, customer_id, restaurant_id,
+         menu_item_id, unit_price, item_name_en, item_name_ar)
+       values ('X-1', $1, $2, $3, $4, 1, 'x', 'x')`,
+      [existing.event_id, existing.customer_id, existing.restaurant_id, existing.menu_item_id],
+    );
+    check('a direct duplicate insert is rejected by the database', false, 'the insert was allowed');
+  } catch (error) {
+    check(
+      'a direct duplicate insert is rejected by the database',
+      error.message.toLowerCase().includes('unique') ||
+        error.message.includes('orders_one_per_phone_per_event'),
+      error.message,
+    );
+  }
+
+  const { rows: constraint } = await db.query(`
+    select 1 from pg_constraint
+    where conname = 'orders_one_per_phone_per_event' and contype = 'u'
+  `);
+  check('UNIQUE(event_id, customer_phone) exists on orders', constraint.length === 1);
+}
+
+console.log('\nVerification cannot be borrowed');
+{
+  const expectVerifyError = async (label, sentinel, tokenHash, overrides) => {
+    try {
+      await placeVerified(tokenHash, overrides);
+      check(label, false, 'no error was raised');
+    } catch (error) {
+      check(label, error.message.includes(sentinel), error.message);
+    }
+  };
+
+  await expectVerifyError('an unknown session cannot order', 'NOT_VERIFIED', 'no-such-token');
+
+  // A pending (unverified) request for a second number.
+  await requestVerification({
+    p_phone: VPHONE_2,
+    p_name: 'Second Guest',
+    p_code_hash: 'hash-code-4',
+    p_token_hash: 'hash-token-4',
+  });
+  await expectVerifyError('a pending session cannot order', 'NOT_VERIFIED', 'hash-token-4');
+
+  await confirm(VPHONE_2, 'hash-code-4');
+  await expectVerifyError(
+    'a session verified for one event cannot order in another',
+    'EVENT_MISMATCH',
+    'hash-token-4',
+    { p_event_slug: 'fixture-event-two' },
+  );
+
+  // ...but the same number may order in another event through its own verification.
+  await db.query(
+    `update public.phone_verifications set created_at = created_at - interval '1 minute'
+     where phone = $1`,
+    [VPHONE_2],
+  );
+  await requestVerification({
+    p_event_slug: 'fixture-event-two',
+    p_phone: VPHONE_2,
+    p_name: 'Second Guest',
+    p_code_hash: 'hash-code-5',
+    p_token_hash: 'hash-token-5',
+  });
+  await confirm(VPHONE_2, 'hash-code-5');
+  const otherEventOrder = (
+    await placeVerified('hash-token-5', { p_event_slug: 'fixture-event-two' })
+  ).rows[0].result;
+  check(
+    'the same number may order in a different event',
+    otherEventOrder.result === 'created',
+    JSON.stringify(otherEventOrder),
+  );
+
+  // An expired verified session is refused.
+  await db.query(
+    `update public.phone_verifications set session_expires_at = now() - interval '1 minute'
+     where session_token_hash = 'hash-token-5'`,
+  );
+  await expectVerifyError(
+    'an expired verified session is refused',
+    'VERIFICATION_EXPIRED',
+    'hash-token-5',
+    { p_event_slug: 'fixture-event-two' },
+  );
+
+  // An expired code cannot be confirmed. A third number, because the two above
+  // have both ordered and would short-circuit to their existing order.
+  await requestVerification({
+    p_phone: VPHONE_3,
+    p_name: 'Third Guest',
+    p_code_hash: 'hash-code-6',
+    p_token_hash: 'hash-token-6',
+  });
+  await db.query(
+    `update public.phone_verifications set expires_at = now() - interval '1 second'
+     where session_token_hash = 'hash-token-6'`,
+  );
+  const expiredConfirm = (await confirm(VPHONE_3, 'hash-code-6')).rows[0].result;
+  check('an expired code cannot be confirmed', expiredConfirm.result === 'no_match');
+  check('the expired request is retired', (await sessionOf('hash-token-6')).status === 'expired');
+}
+
+console.log('\nVerification data is not reachable from a browser');
+{
+  const { rows: rls } = await db.query(
+    `select relrowsecurity from pg_class where oid = 'public.phone_verifications'::regclass`,
+  );
+  check('RLS is enabled on phone_verifications', rls[0]?.relrowsecurity === true);
+
+  const { rows: policies } = await db.query(
+    `select policyname, cmd, roles::text from pg_policies
+     where schemaname = 'public' and tablename = 'phone_verifications'`,
+  );
+  check(
+    `the only policy is an admin read (${policies.map((p) => p.policyname).join(', ') || 'none'})`,
+    policies.length === 1 && policies[0].cmd === 'SELECT',
+  );
+
+  for (const fn of [
+    'request_phone_verification',
+    'confirm_phone_verification',
+    'verification_session',
+    'place_verified_order',
+  ]) {
+    const { rows } = await db.query(
+      `select has_function_privilege('anon', p.oid, 'execute') as anon,
+              has_function_privilege('authenticated', p.oid, 'execute') as auth
+       from pg_proc p
+       join pg_namespace n on n.oid = p.pronamespace
+       where n.nspname = 'public' and p.proname = $1`,
+      [fn],
+    );
+    check(
+      `neither anon nor authenticated can execute ${fn}`,
+      rows.every((row) => row.anon === false && row.auth === false),
+    );
+  }
 }
 
 console.log(`\n${checks - failures}/${checks} checks passed\n`);

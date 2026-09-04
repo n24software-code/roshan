@@ -3,24 +3,30 @@
 A bilingual (English / Arabic) ordering site for a single event, plus an English-only
 admin dashboard.
 
-A guest browses restaurants, picks **one dish**, gives their name, email and Saudi
-mobile number, verifies that number by SMS, and receives an order number to show at
-the collection counter.
+A guest browses restaurants, picks **one dish**, gives their name and Saudi mobile
+number, proves the number is theirs by sending a WhatsApp message, and receives an
+order number to show at the collection counter.
 
-There are no payments, no delivery, no cart, and no customer login.
+There is no attendee list, no registration, no password, no email, no payments, no
+delivery, no cart and no customer login.
 
 ## The one rule everything is built around
 
-> **One verified customer = one order per event.**
+> **One verified phone number = one order per event.**
 
 That rule is enforced by the database, not by the interface:
 
-- `UNIQUE (event_id, customer_id)` on `orders`
-- `UNIQUE (phone)` on `customers`, where the phone is always stored normalized to
-  `+9665XXXXXXXX`, so `0551234567` and `+966551234567` are the same person
-- a single `place_order()` function that performs every check and the insert in one
-  transaction, so refreshing, a second tab, another device, incognito, a double-click
-  or two simultaneous API calls all end at the same place: one order
+- `UNIQUE (event_id, customer_phone)` on `orders`, where `customer_phone` is filled by
+  a trigger so every insertion path is covered
+- `UNIQUE (event_id, customer_id)` on `orders` and `UNIQUE (phone)` on `customers`
+- every phone is stored normalized to `+9665XXXXXXXX`, so `0551234567`,
+  `966551234567` and `+966551234567` are the same person
+- a single `place_verified_order()` function that performs every check and the insert
+  in one transaction, so refreshing, a second tab, another device, incognito, a
+  double-click or two simultaneous API calls all end at the same place: one order
+
+Uniqueness is scoped to the event, so the same number may order again at a different
+event.
 
 A guest who tries again is shown their existing order, and the attempt is recorded in
 `admin_audit_logs` so staff can see it on the Customers page.
@@ -50,10 +56,15 @@ Copy `.env.example` to `.env.local` and fill it in:
 | -------------------------------------- | ---------------- | ----------------------------------------------- |
 | `NEXT_PUBLIC_SUPABASE_URL`             | browser + server | Project URL                                     |
 | `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | browser + server | Public key (or `NEXT_PUBLIC_SUPABASE_ANON_KEY`) |
-| `SUPABASE_SERVICE_ROLE_KEY`            | **server only**  | Order creation. Bypasses RLS — never expose it  |
+| `SUPABASE_SERVICE_ROLE_KEY`            | **server only**  | Verification + order creation. Bypasses RLS     |
 | `NEXT_PUBLIC_APP_URL`                  | browser          | Absolute app URL                                |
+| `PHONE_VERIFICATION_SECRET`            | **server only**  | HMAC key for one-time codes. Required in prod   |
+| `VERIFICATION_PROVIDER`                | **server only**  | `whatsapp_cloud` (default) or `dev` (local)     |
+| `WHATSAPP_BUSINESS_NUMBER`             | **server only**  | Number attendees message, digits only           |
+| `WHATSAPP_APP_SECRET`                  | **server only**  | Verifies the webhook signature                  |
+| `WHATSAPP_WEBHOOK_VERIFY_TOKEN`        | **server only**  | Echoed back on Meta's webhook handshake         |
 
-No Twilio credential belongs here. Twilio is configured inside Supabase (step 4).
+Locally, `VERIFICATION_PROVIDER=dev` is enough — see step 4.
 
 ### 3. Database
 
@@ -67,6 +78,9 @@ supabase/migrations/0001_init.sql       tables, constraints, indexes
 supabase/migrations/0002_functions.sql  place_order(), triggers, realtime
 supabase/migrations/0003_rls.sql        row level security
 supabase/migrations/0004_storage.sql    image bucket + storage policies
+supabase/migrations/0005_phone_verification.sql
+                                        phone_verifications, one-order-per-phone
+                                        constraint, verification RPCs
 supabase/seed.sql                       LEAP Riyadh demo data
 ```
 
@@ -76,17 +90,30 @@ supabase/seed.sql                       LEAP Riyadh demo data
 npm run db:bundle
 ```
 
-### 4. SMS verification (Twilio via Supabase)
+### 4. WhatsApp verification
 
-In the Supabase dashboard → **Authentication → Sign In / Providers → Phone**:
+**Locally** nothing external is needed. Set `VERIFICATION_PROVIDER=dev` and the verify
+screen offers a **Simulate WhatsApp message** button that replays the message through
+the real webhook, so the whole path — request, code, webhook, verified session — is
+exercised without a WhatsApp account. The `dev` provider refuses to load when
+`NODE_ENV=production`.
 
-1. Enable **Phone**
-2. Choose **Twilio** and enter the Account SID, Auth Token and Message Service SID
-3. Set the OTP length to **6** and the expiry to **600** seconds
-4. Leave "Confirm phone" enabled
+**In production**, create a Meta WhatsApp Business app
+(<https://developers.facebook.com> → WhatsApp → API Setup):
 
-Until this is configured, the OTP screen reports
-_"SMS verification is not configured for this environment."_
+1. Note the business phone number attendees will message → `WHATSAPP_BUSINESS_NUMBER`
+   (digits only, with country code)
+2. App settings → Basic → **App secret** → `WHATSAPP_APP_SECRET`
+3. WhatsApp → Configuration → **Webhook**
+   - Callback URL: `https://your-domain.example/api/verification/whatsapp`
+   - Verify token: any string you choose → `WHATSAPP_WEBHOOK_VERIFY_TOKEN`
+   - Subscribe to the **`messages`** field
+4. Set `VERIFICATION_PROVIDER=whatsapp_cloud` and a
+   `PHONE_VERIFICATION_SECRET` (`openssl rand -base64 32`)
+
+Until those are set the verification screen reports
+_"WhatsApp verification is not configured for this environment."_ and no order can be
+placed — production never accepts an unverified number.
 
 ### 5. Create an admin
 
@@ -122,7 +149,8 @@ npm run build
 `npm run verify:schema` needs no database: it boots Postgres in WASM (PGlite), applies
 the migrations and the seed, then checks the one-order rule, price authority, the
 disabled-restaurant and unavailable-item paths, every constraint, the history and
-notification triggers, and that RLS is enabled everywhere.
+notification triggers, the whole verification lifecycle (rate limiting, wrong codes,
+attempt limits, replay, expiry, cross-event reuse) and that RLS is enabled everywhere.
 
 The integration suite in `tests/integration/` runs the same rules against a real
 Supabase project — including true concurrent submissions and RLS as an anonymous
@@ -139,16 +167,32 @@ NEXT_PUBLIC_SUPABASE_URL=... SUPABASE_SERVICE_ROLE_KEY=... npm test
 ```
 Guest picks restaurant + item        (client, stored locally)
         ↓
-Name / email / Saudi mobile          server action: sendVerificationCode
-        ↓                            → Supabase Auth → Twilio SMS
-6-digit code
-        ↓                            server action: verifyAndPlaceOrder
-Supabase verifies the OTP            → session established, phone confirmed
+Name + Saudi mobile                  server action: startPhoneVerification
+        ↓                            → request_phone_verification()
+                                       stores an HMAC of a one-time code and a
+                                       SHA-256 of the session token; the browser
+                                       gets the token in an httpOnly cookie
         ↓
-place_order() in one transaction     → re-reads event, restaurant, item and PRICE
+"Verify via WhatsApp"                opens wa.me with the message prefilled.
+        ↓                            Clicking it verifies nothing.
+Guest sends the message
+        ↓
+POST /api/verification/whatsapp      signature checked, sender read from the
+        ↓                            provider payload, not the message body
+confirm_phone_verification()         → matches sender + code, marks the row
+        ↓                              verified and destroys the code hash
+Screen polls and continues           server action: submitVerifiedOrder
+        ↓
+place_verified_order()               → identity comes from the verification row;
+  in one transaction                   re-reads event, restaurant, item and PRICE
         ↓                              from the database; refuses anything invalid
 Order number (A-1048)                → returns 'created' or 'duplicate'
 ```
+
+Ownership of the number is established by the _sender_ the provider reports. The code
+in the message body only says which request is being answered, it is stored as an
+HMAC, it expires after 10 minutes, it survives five wrong attempts at most, and it is
+destroyed the moment it is used — so it can never be replayed.
 
 The client never sends a price. `place_order()` has no price parameter at all, so a
 tampered request cannot express one. Restaurant and item ids are treated as lookup
@@ -187,12 +231,19 @@ allow-list, and storage RLS blocks any non-admin write.
 
 ## Security
 
-- Row Level Security on every table. The public catalogue is readable by anyone; a
-  guest can read only their own customer row and their own order; everything else is
-  admin-only.
+- Row Level Security on every table. The public catalogue is readable by anyone;
+  `phone_verifications` is readable by admins only and by nobody else; everything else
+  is admin-only.
 - Customers can never insert or update an order. Creation goes through
-  `place_order()`, which is granted to `service_role` only and revoked from `anon` and
-  `authenticated`.
+  `place_verified_order()`, which — like every verification function — is granted to
+  `service_role` only and revoked from `anon` and `authenticated`.
+- The verification cookie is an opaque lookup key with no phone number, status or
+  signature in it. Forging, copying or clearing it cannot produce a verified state the
+  database does not already hold; the cookie is UX, the row is the boundary.
+- A code verified for one event cannot place an order in another: the event is on the
+  verification row and is compared with the event being ordered in.
+- Verification requests are rate limited per number (a 30-second cooldown and five
+  requests per hour) and codes expire after 10 minutes.
 - Admin access requires a row in `user_roles`. It is checked in the proxy
   (`src/proxy.ts`) **and** again server-side on every admin page and mutation
   (`requireAdmin`), so a hidden route is never the only defence.
@@ -212,20 +263,23 @@ src/
     (site)/[locale]/          storefront — English + Arabic, RTL aware
       page.tsx                event landing + restaurant list
       restaurants/[slug]/     menu, search, single-item selection
-      order/                  selection review + customer details
-      verify/                 OTP screen
+      order/                  selection review + attendee details
+      verify/                 WhatsApp verification screen
       confirmation/[orderNumber]/  confirmation + live status
     (admin)/admin/            dashboard — English only, LTR
       login/
       (dashboard)/            dashboard, orders, restaurants, menu,
                               customers, events, notifications, reports, settings
     api/admin/reports/export/ CSV export
+    api/verification/whatsapp/ inbound WhatsApp webhook
   components/{customer,admin,ui}/
   lib/
     supabase/                 browser / server / service-role / proxy clients
     auth/                     admin authorization + sign-in
     validation/               shared Zod schemas
     orders/                   order server actions + error codes
+    verification/             codes, message, session cookie, service,
+                              server actions, swappable providers/
     admin/                    admin mutations + status transitions
     phone/                    Saudi number normalization
     i18n/                     translator, locale config
@@ -234,6 +288,7 @@ src/
   proxy.ts                    locale routing + session refresh + admin gate
 supabase/
   migrations/                 0001 schema · 0002 logic · 0003 RLS
+                              0004 storage · 0005 phone verification
   seed.sql                    LEAP Riyadh demo data
   setup.sql                   generated: all of the above in one paste
 scripts/

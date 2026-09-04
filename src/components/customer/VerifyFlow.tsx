@@ -5,8 +5,9 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useRef, useState, useTransition } from 'react';
 import { createTranslator } from '@/lib/i18n';
 import type { Locale } from '@/lib/i18n/config';
-import { maskSaudiPhone } from '@/lib/phone';
-import { sendVerificationCode, verifyAndPlaceOrder } from '@/lib/orders/actions';
+import { formatSaudiPhone } from '@/lib/phone';
+import { submitVerifiedOrder } from '@/lib/orders/actions';
+import { checkVerificationStatus, startPhoneVerification } from '@/lib/verification/actions';
 import {
   detailsStore,
   orderStore,
@@ -15,76 +16,88 @@ import {
   usePendingDetails,
   useStoredSelection,
 } from '@/lib/selection';
-import { OtpInput, OTP_BLANK, otpDigits } from './OtpInput';
 import { Alert } from '@/components/ui/Alert';
-import { Button } from '@/components/ui/Button';
+import { Button, buttonClass } from '@/components/ui/Button';
 import { Skeleton } from '@/components/ui/Skeleton';
 
+const POLL_INTERVAL_MS = 3000;
 const RESEND_SECONDS = 30;
 
+type Phase = 'waiting' | 'verified' | 'submitting' | 'expired' | 'failed';
+
+function secondsUntil(iso: string | undefined, now: number): number {
+  if (!iso) return 0;
+  return Math.max(0, Math.round((new Date(iso).getTime() - now) / 1000));
+}
+
+function clock(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
 /**
- * Verification screen. On success the order is created in the same server round
- * trip, so a verified guest can never end up verified-but-order-less.
+ * WhatsApp verification screen.
+ *
+ * Opening WhatsApp proves nothing on its own: the screen simply polls the
+ * server, and the server only reports "verified" once the inbound message has
+ * actually arrived at the webhook from this number. Once that happens the
+ * pending selection is submitted in the same visit.
  */
 export function VerifyFlow({ locale }: { locale: Locale }) {
   const t = createTranslator(locale);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
 
-  // The in-progress flow is read straight from storage; without it there is
-  // nothing to verify and the guest is sent back to browsing.
   const ready = useHydrated();
   const details = usePendingDetails();
   const selection = useStoredSelection();
 
-  const [code, setCode] = useState(OTP_BLANK);
+  const [phase, setPhase] = useState<Phase>('waiting');
   const [error, setError] = useState<string | null>(null);
-  const [resentNotice, setResentNotice] = useState<string | null>(null);
-  const [secondsLeft, setSecondsLeft] = useState(RESEND_SECONDS);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [resendIn, setResendIn] = useState(RESEND_SECONDS);
+  const [opened, setOpened] = useState(false);
   const submittedRef = useRef(false);
 
-  // Confirms the code that the details screen already sent, until a resend
-  // replaces the message with a fresh one.
-  const notice =
-    resentNotice ?? (details ? t('otp.sent', { phone: maskSaudiPhone(details.phone) }) : null);
-
-  // Resend countdown.
+  // ---- countdowns -------------------------------------------------------
+  // One ticking clock; both counters are derived from it, so nothing has to be
+  // re-synchronised when the pending request is replaced by a fresh one.
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
-    if (secondsLeft <= 0) return;
-    const timer = setTimeout(() => setSecondsLeft((value) => value - 1), 1000);
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const secondsLeft = secondsUntil(details?.expiresAt, now);
+
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn((value) => value - 1), 1000);
     return () => clearTimeout(timer);
-  }, [secondsLeft]);
+  }, [resendIn]);
 
-  // Plain function: the React Compiler memoizes it, and a manual useCallback
-  // here only fought with the inferred dependencies.
-  function submit(rawCode: string) {
-    if (!details || !selection) return;
-    if (submittedRef.current) return; // guard against double submission
+  // A code that has run out of time is expired whether or not the server has
+  // been asked yet.
+  const currentPhase: Phase = phase === 'waiting' && secondsLeft <= 0 ? 'expired' : phase;
 
-    const digits = otpDigits(rawCode);
-    if (digits.length !== 6) {
-      setError(t('errors.otp_invalid'));
-      return;
-    }
-
+  // ---- the order, placed as soon as the number is verified --------------
+  function placeOrder() {
+    if (!selection || submittedRef.current) return;
     submittedRef.current = true;
-    setError(null);
+    setPhase('submitting');
 
     startTransition(async () => {
-      const result = await verifyAndPlaceOrder({
-        phone: details.phone,
-        code: digits,
+      const result = await submitVerifiedOrder({
         eventSlug: selection.eventSlug,
         restaurantId: selection.restaurantId,
         menuItemId: selection.menuItemId,
-        name: details.name,
-        email: details.email,
       });
 
       if (!result.ok) {
         submittedRef.current = false;
+        setPhase('verified');
         setError(t(`errors.${result.error}`));
-        setCode(OTP_BLANK);
         return;
       }
 
@@ -92,20 +105,70 @@ export function VerifyFlow({ locale }: { locale: Locale }) {
       detailsStore.clear();
       selectionStore.clear();
       orderStore.set(order.order_number);
-
-      const suffix = outcome === 'duplicate' ? '?duplicate=1' : '';
-      router.replace(`/${locale}/confirmation/${order.order_number}${suffix}`);
+      router.replace(
+        `/${locale}/confirmation/${order.order_number}${outcome === 'duplicate' ? '?duplicate=1' : ''}`,
+      );
     });
   }
 
+  // ---- status polling ---------------------------------------------------
+  useEffect(() => {
+    if (!details) return;
+    if (currentPhase !== 'waiting') return;
+
+    let cancelled = false;
+
+    async function poll() {
+      const state = await checkVerificationStatus();
+      if (cancelled) return;
+
+      // Verified and already holding an order for this event: nothing left to
+      // do but show it. `order` is only ever present on a verified session.
+      if (state.order) {
+        detailsStore.clear();
+        selectionStore.clear();
+        orderStore.set(state.order.order_number);
+        router.replace(`/${locale}/confirmation/${state.order.order_number}?duplicate=1`);
+        return;
+      }
+
+      if (state.status === 'verified') setPhase('verified');
+      else if (state.status === 'expired' || state.status === 'none') setPhase('expired');
+      else if (state.status === 'failed') setPhase('failed');
+    }
+
+    void poll();
+    const timer = setInterval(() => void poll(), POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [details, currentPhase, locale, router]);
+
+  // Verified with a selection waiting: submit it without a second click. The
+  // submitter is reached through a ref so this effect depends only on the facts
+  // that should re-trigger it, not on the identity of a closure.
+  const placeOrderRef = useRef(placeOrder);
+  useEffect(() => {
+    placeOrderRef.current = placeOrder;
+  });
+
+  useEffect(() => {
+    if (currentPhase === 'verified' && selection && !submittedRef.current && !error) {
+      placeOrderRef.current();
+    }
+  }, [currentPhase, selection, error]);
+
+  // ---- resend -----------------------------------------------------------
   function resend() {
-    if (!details || secondsLeft > 0 || pending) return;
+    if (!details || !selection || resendIn > 0 || pending) return;
     setError(null);
+    setNotice(null);
 
     startTransition(async () => {
-      const result = await sendVerificationCode({
+      const result = await startPhoneVerification({
+        eventSlug: selection.eventSlug,
         name: details.name,
-        email: details.email,
         phone: details.phone,
       });
 
@@ -113,9 +176,40 @@ export function VerifyFlow({ locale }: { locale: Locale }) {
         setError(t(`errors.${result.error}`));
         return;
       }
-      setSecondsLeft(RESEND_SECONDS);
-      setCode(OTP_BLANK);
-      setResentNotice(t('otp.sent', { phone: maskSaudiPhone(details.phone) }));
+
+      detailsStore.set({
+        name: details.name,
+        phone: details.phone,
+        menuItemId: details.menuItemId,
+        expiresAt: result.data.expiresAt,
+        whatsappUrl: result.data.whatsappUrl,
+        developmentMessage: result.data.developmentMessage,
+      });
+      submittedRef.current = false;
+      setPhase('waiting');
+      setResendIn(RESEND_SECONDS);
+      setOpened(false);
+      setNotice(t('verify.resent'));
+    });
+  }
+
+  /** Development only: replays the WhatsApp message through the real webhook. */
+  function simulate() {
+    const message = details?.developmentMessage;
+    if (!message) return;
+    setError(null);
+
+    startTransition(async () => {
+      try {
+        await fetch('/api/verification/whatsapp', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(message),
+        });
+        setNotice(t('verify.simulated'));
+      } catch {
+        setError(t('errors.network'));
+      }
     });
   }
 
@@ -128,7 +222,7 @@ export function VerifyFlow({ locale }: { locale: Locale }) {
     );
   }
 
-  // The guest landed here without a pending verification — restart the flow.
+  // Landed here without a pending verification — restart the flow.
   if (!details || !selection) {
     return (
       <div className="space-y-5 text-center">
@@ -141,65 +235,154 @@ export function VerifyFlow({ locale }: { locale: Locale }) {
     );
   }
 
+  const statusLabel =
+    currentPhase === 'verified' || currentPhase === 'submitting'
+      ? t('verify.statusVerified')
+      : currentPhase === 'expired'
+        ? t('verify.statusExpired')
+        : currentPhase === 'failed'
+          ? t('verify.statusFailed')
+          : t('verify.statusWaiting');
+
   return (
     <div className="space-y-7">
       <header className="text-center">
         <h1 className="text-3xl font-extrabold tracking-tight text-ink-900 md:text-4xl">
-          {t('otp.title')}
+          {t('verify.title')}
         </h1>
-        <p className="mt-3 text-ink-500">{t('otp.subtitle')}</p>
-        <p className="numeric mt-1 text-lg font-bold text-ink-900">
-          {maskSaudiPhone(details.phone)}
+        <p className="mt-3 text-ink-500">{t('verify.subtitle')}</p>
+        <p className="numeric mt-1 text-lg font-bold text-ink-900" dir="ltr">
+          {formatSaudiPhone(details.phone)}
         </p>
       </header>
+
+      {/* --------------------------------------------------------- status */}
+      <div className="card-surface flex items-center justify-between gap-4 bg-sand-50 px-5 py-4">
+        <span className="text-sm font-semibold text-ink-500">{t('verify.statusLabel')}</span>
+        <span
+          aria-live="polite"
+          className={`text-sm font-bold ${
+            currentPhase === 'verified' || currentPhase === 'submitting'
+              ? 'text-brand-700'
+              : currentPhase === 'waiting'
+                ? 'text-ink-700'
+                : 'text-red-700'
+          }`}
+        >
+          {currentPhase === 'waiting' && (
+            <span
+              aria-hidden="true"
+              className="me-2 inline-block h-2 w-2 animate-pulse rounded-full bg-brand-600 align-middle"
+            />
+          )}
+          {statusLabel}
+        </span>
+      </div>
 
       {notice && !error && <Alert tone="success">{notice}</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
 
-      <OtpInput
-        value={code}
-        onChange={setCode}
-        onComplete={submit}
-        disabled={pending}
-        hasError={Boolean(error)}
-        label={t('otp.codeLabel')}
-        digitLabel={(index) => t('otp.digitLabel', { index })}
-      />
+      {currentPhase === 'expired' && <Alert tone="error">{t('errors.verification_expired')}</Alert>}
+      {currentPhase === 'failed' && <Alert tone="error">{t('errors.verification_failed')}</Alert>}
 
-      <Button
-        type="button"
-        size="lg"
-        className="w-full"
-        disabled={pending || otpDigits(code).length !== 6}
-        onClick={() => submit(code)}
-      >
-        {pending ? t('otp.creatingOrder') : t('otp.verify')}
-      </Button>
+      {/* ------------------------------------------------ WhatsApp handoff */}
+      {currentPhase === 'waiting' && (
+        <div className="space-y-4">
+          <ol className="list-decimal space-y-1 ps-5 text-sm text-ink-600">
+            <li>{t('verify.step1')}</li>
+            <li>{t('verify.step2')}</li>
+            <li>{t('verify.step3')}</li>
+          </ol>
 
-      <div className="space-y-2 text-center text-sm">
-        <p className="text-ink-500">{t('otp.noCode')}</p>
-        {secondsLeft > 0 ? (
-          <p className="numeric font-semibold text-ink-400" aria-live="polite">
-            {t('otp.resendIn', { seconds: secondsLeft })}
+          {details.whatsappUrl ? (
+            <a
+              href={details.whatsappUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setOpened(true)}
+              className={buttonClass('primary', 'lg', 'w-full')}
+            >
+              {t('verify.openWhatsapp')}
+            </a>
+          ) : (
+            <Alert tone="warning">{t('errors.verification_not_configured')}</Alert>
+          )}
+
+          {opened && <p className="text-center text-sm text-ink-500">{t('verify.afterSending')}</p>}
+
+          <p className="numeric text-center text-sm font-semibold text-ink-400" aria-live="off">
+            {t('verify.expiresIn', { time: clock(secondsLeft) })}
           </p>
-        ) : (
-          <button
+
+          {details.developmentMessage && (
+            <div className="rounded-xl border border-dashed border-amber-400 bg-amber-50 p-4">
+              <p className="text-xs font-bold tracking-[0.14em] text-amber-800 uppercase">
+                {t('verify.devTitle')}
+              </p>
+              <p className="mt-1 text-sm text-amber-900">{t('verify.devBody')}</p>
+              <Button
+                type="button"
+                variant="secondary"
+                className="mt-3 w-full"
+                disabled={pending}
+                onClick={simulate}
+              >
+                {t('verify.devButton')}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {(currentPhase === 'verified' || currentPhase === 'submitting') &&
+        (error ? (
+          // The number is verified but the order did not go through — let the
+          // guest retry without verifying again.
+          <Button
             type="button"
-            onClick={resend}
+            size="lg"
+            className="w-full"
             disabled={pending}
-            className="font-semibold text-brand-700 underline underline-offset-4 hover:text-brand-800 disabled:text-ink-400"
+            onClick={() => {
+              setError(null);
+              placeOrderRef.current();
+            }}
           >
-            {t('otp.resend')}
-          </button>
-        )}
-      </div>
+            {t('verify.retryOrder')}
+          </Button>
+        ) : (
+          <p className="text-center font-semibold text-ink-700" aria-live="polite">
+            {t('verify.creatingOrder')}
+          </p>
+        ))}
+
+      {/* --------------------------------------------------------- resend */}
+      {(currentPhase === 'waiting' || currentPhase === 'expired' || currentPhase === 'failed') && (
+        <div className="space-y-2 text-center text-sm">
+          <p className="text-ink-500">{t('verify.noMessage')}</p>
+          {resendIn > 0 ? (
+            <p className="numeric font-semibold text-ink-400" aria-live="polite">
+              {t('verify.resendIn', { seconds: resendIn })}
+            </p>
+          ) : (
+            <button
+              type="button"
+              onClick={resend}
+              disabled={pending}
+              className="font-semibold text-brand-700 underline underline-offset-4 hover:text-brand-800 disabled:text-ink-400"
+            >
+              {t('verify.resend')}
+            </button>
+          )}
+        </div>
+      )}
 
       <p className="text-center">
         <Link
           href={`/${locale}/order?item=${selection.menuItemId}`}
           className="text-sm font-semibold text-ink-500 underline underline-offset-4 hover:text-ink-700"
         >
-          {t('otp.changeNumber')}
+          {t('verify.changeNumber')}
         </Link>
       </p>
     </div>

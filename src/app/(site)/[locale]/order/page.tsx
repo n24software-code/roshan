@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { getLocaleContext } from '@/lib/i18n/server';
 import { formatPrice, localized } from '@/lib/i18n';
 import { getActiveEvent, getSelection } from '@/lib/data/customer';
+import { getVerificationState } from '@/lib/verification/service';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Alert } from '@/components/ui/Alert';
 import { buttonClass } from '@/components/ui/Button';
@@ -22,6 +23,13 @@ export default async function OrderPage({
 
   const event = await getActiveEvent();
   const selection = event && menuItemId ? await getSelection(event.id, menuItemId) : null;
+
+  // A verified number that has already ordered at this event never sees the
+  // form again. This is a courtesy, not the protection: the database refuses a
+  // second order whether or not this check runs.
+  const verification = await getVerificationState();
+  const existingOrder =
+    event && verification.order?.event.slug === event.slug ? verification.order : null;
 
   // Nothing chosen (or the link was stale): send the guest back to browsing.
   if (!event || !selection) {
@@ -114,7 +122,19 @@ export default async function OrderPage({
         <p className="mt-2 text-ink-500">{t('details.subtitle')}</p>
 
         <div className="card-surface mt-6 p-5 md:p-7">
-          {blocked ? (
+          {existingOrder ? (
+            <div className="space-y-5">
+              <Alert tone="warning" title={t('confirmation.duplicateTitle')}>
+                {t('confirmation.duplicateBody')}
+              </Alert>
+              <Link
+                href={`/${locale}/confirmation/${existingOrder.order_number}?duplicate=1`}
+                className={buttonClass('primary', 'md', 'w-full')}
+              >
+                {t('confirmation.viewOrder')}
+              </Link>
+            </div>
+          ) : blocked ? (
             <div className="space-y-5">
               <Alert tone="error">
                 {restaurantClosed ? t('errors.restaurant_disabled') : t('errors.item_unavailable')}

@@ -1,66 +1,74 @@
 import { describe, expect, it } from 'vitest';
-import { customerDetailsSchema, otpCodeSchema, placeOrderSchema } from '@/lib/validation/schemas';
+import {
+  attendeeDetailsSchema,
+  startVerificationSchema,
+  submitOrderSchema,
+} from '@/lib/validation/schemas';
 
 const VALID_UUID = '11111111-2222-4333-8444-555555555555';
 
-describe('customer details', () => {
+describe('attendee details', () => {
   it('accepts a valid submission and stores the phone normalized', () => {
-    const result = customerDetailsSchema.safeParse({
-      name: 'Ahmed Ali',
-      email: 'Ahmed@Example.COM',
-      phone: '0551234567',
-    });
+    const result = attendeeDetailsSchema.safeParse({ name: 'Ahmed Ali', phone: '0551234567' });
 
     expect(result.success).toBe(true);
-    if (result.success) {
-      expect(result.data.phone).toBe('+966551234567');
-      expect(result.data.email).toBe('ahmed@example.com');
-    }
+    if (result.success) expect(result.data.phone).toBe('+966551234567');
   });
 
   it('accepts Arabic names', () => {
-    const result = customerDetailsSchema.safeParse({
-      name: 'أحمد علي',
-      email: 'a@b.com',
-      phone: '0551234567',
-    });
-    expect(result.success).toBe(true);
+    expect(attendeeDetailsSchema.safeParse({ name: 'أحمد علي', phone: '0551234567' }).success).toBe(
+      true,
+    );
+  });
+
+  it('resolves every accepted Saudi format to the same identity', () => {
+    const formats = ['0501234567', '+966501234567', '966501234567', '00966501234567', '501234567'];
+    const normalized = new Set(
+      formats.map((phone) => {
+        const parsed = attendeeDetailsSchema.safeParse({ name: 'Hamid', phone });
+        return parsed.success ? parsed.data.phone : phone;
+      }),
+    );
+
+    expect([...normalized]).toEqual(['+966501234567']);
   });
 
   it('rejects an invalid phone with the phone_invalid code', () => {
-    const result = customerDetailsSchema.safeParse({
-      name: 'Ahmed Ali',
-      email: 'a@b.com',
-      phone: '0112345678',
-    });
+    const result = attendeeDetailsSchema.safeParse({ name: 'Ahmed Ali', phone: '0112345678' });
     expect(result.success).toBe(false);
     if (!result.success) {
       expect(result.error.issues.some((issue) => issue.message === 'phone_invalid')).toBe(true);
     }
   });
 
-  it('rejects malformed emails and one-character names', () => {
-    for (const email of ['nope', 'a@b', 'a b@c.com', '']) {
-      const result = customerDetailsSchema.safeParse({
-        name: 'Ahmed Ali',
-        email,
-        phone: '0551234567',
-      });
-      expect(result.success, email).toBe(false);
-    }
+  it('rejects one-character names', () => {
+    expect(attendeeDetailsSchema.safeParse({ name: 'A', phone: '0551234567' }).success).toBe(false);
+  });
 
-    expect(
-      customerDetailsSchema.safeParse({ name: 'A', email: 'a@b.com', phone: '0551234567' }).success,
-    ).toBe(false);
+  it('does not ask for an email address at all', () => {
+    const result = attendeeDetailsSchema.safeParse({
+      name: 'Ahmed Ali',
+      phone: '0551234567',
+      email: 'a@b.com',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) expect(result.data).not.toHaveProperty('email');
   });
 });
 
-describe('otp code', () => {
-  it('requires exactly six digits', () => {
-    expect(otpCodeSchema.safeParse('123456').success).toBe(true);
-    for (const code of ['12345', '1234567', 'abcdef', '12 34 56', '']) {
-      expect(otpCodeSchema.safeParse(code).success, code).toBe(false);
-    }
+describe('starting verification', () => {
+  it('requires an event', () => {
+    expect(
+      startVerificationSchema.safeParse({ name: 'Ahmed Ali', phone: '0551234567' }).success,
+    ).toBe(false);
+
+    expect(
+      startVerificationSchema.safeParse({
+        name: 'Ahmed Ali',
+        phone: '0551234567',
+        eventSlug: 'leap-riyadh',
+      }).success,
+    ).toBe(true);
   });
 });
 
@@ -69,16 +77,14 @@ describe('order submission', () => {
     eventSlug: 'leap-riyadh',
     restaurantId: VALID_UUID,
     menuItemId: VALID_UUID,
-    name: 'Ahmed Ali',
-    email: 'a@b.com',
   };
 
   it('accepts a well-formed submission', () => {
-    expect(placeOrderSchema.safeParse(valid).success).toBe(true);
+    expect(submitOrderSchema.safeParse(valid).success).toBe(true);
   });
 
   it('never carries a price — the client cannot influence what an order costs', () => {
-    const result = placeOrderSchema.safeParse({ ...valid, price: 1, unit_price: 1 });
+    const result = submitOrderSchema.safeParse({ ...valid, price: 1, unit_price: 1 });
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data).not.toHaveProperty('price');
@@ -86,8 +92,21 @@ describe('order submission', () => {
     }
   });
 
+  it('never carries an identity — that comes from the verification record', () => {
+    const result = submitOrderSchema.safeParse({
+      ...valid,
+      phone: '+966500000000',
+      name: 'Someone Else',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data).not.toHaveProperty('phone');
+      expect(result.data).not.toHaveProperty('name');
+    }
+  });
+
   it('rejects ids that are not uuids', () => {
-    expect(placeOrderSchema.safeParse({ ...valid, menuItemId: 'burger' }).success).toBe(false);
-    expect(placeOrderSchema.safeParse({ ...valid, restaurantId: '1' }).success).toBe(false);
+    expect(submitOrderSchema.safeParse({ ...valid, menuItemId: 'burger' }).success).toBe(false);
+    expect(submitOrderSchema.safeParse({ ...valid, restaurantId: '1' }).success).toBe(false);
   });
 });

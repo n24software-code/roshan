@@ -6,6 +6,7 @@ export type EventStatus = 'draft' | 'active' | 'inactive';
 export type RestaurantStatus = 'active' | 'disabled';
 export type OrderStatus = 'new' | 'accepted' | 'preparing' | 'ready' | 'completed' | 'cancelled';
 export type AppRole = 'admin';
+export type VerificationStatus = 'pending' | 'verified' | 'expired' | 'failed';
 
 export type EventRow = {
   id: string;
@@ -79,7 +80,8 @@ export type CustomerRow = {
   id: string;
   auth_user_id: string | null;
   name: string;
-  email: string;
+  /** Optional: attendees identify themselves with a name and a phone only. */
+  email: string | null;
   phone: string;
   phone_verified: boolean;
   created_at: string;
@@ -93,6 +95,8 @@ export type OrderRow = {
   customer_id: string;
   restaurant_id: string;
   menu_item_id: string;
+  /** Normalized E.164 phone, filled by a trigger. UNIQUE with event_id. */
+  customer_phone: string;
   unit_price: number;
   item_name_en: string;
   item_name_ar: string;
@@ -100,6 +104,23 @@ export type OrderRow = {
   cancel_reason: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type PhoneVerificationRow = {
+  id: string;
+  event_id: string;
+  phone: string;
+  name: string;
+  code_hash: string | null;
+  session_token_hash: string;
+  status: VerificationStatus;
+  attempts: number;
+  channel: string;
+  provider: string;
+  created_at: string;
+  expires_at: string;
+  verified_at: string | null;
+  session_expires_at: string | null;
 };
 
 export type OrderStatusHistoryRow = {
@@ -161,6 +182,7 @@ export type Database = {
       menu_categories: Table<MenuCategoryRow>;
       menu_items: Table<MenuItemRow>;
       customers: Table<CustomerRow>;
+      phone_verifications: Table<PhoneVerificationRow>;
       orders: Table<OrderRow>;
       order_status_history: Table<OrderStatusHistoryRow>;
       notifications: Table<NotificationRow>;
@@ -184,12 +206,50 @@ export type Database = {
         };
         Returns: PlaceOrderResult;
       };
+      request_phone_verification: {
+        Args: {
+          p_event_slug: string;
+          p_phone: string;
+          p_name: string;
+          p_code_hash: string;
+          p_token_hash: string;
+          p_code_ttl_seconds?: number;
+          p_provider?: string;
+          p_resend_cooldown_seconds?: number;
+          p_max_per_hour?: number;
+        };
+        Returns: RequestVerificationResult;
+      };
+      confirm_phone_verification: {
+        Args: {
+          p_phone: string;
+          p_code_hash: string;
+          p_provider?: string;
+          p_max_attempts?: number;
+          p_session_ttl_seconds?: number;
+        };
+        Returns: ConfirmVerificationResult;
+      };
+      verification_session: {
+        Args: { p_token_hash: string };
+        Returns: VerificationSessionState;
+      };
+      place_verified_order: {
+        Args: {
+          p_token_hash: string;
+          p_event_slug: string;
+          p_restaurant_id: string;
+          p_menu_item_id: string;
+        };
+        Returns: PlaceOrderResult;
+      };
     };
     Enums: {
       event_status: EventStatus;
       restaurant_status: RestaurantStatus;
       order_status: OrderStatus;
       app_role: AppRole;
+      verification_status: VerificationStatus;
     };
     CompositeTypes: Record<never, never>;
   };
@@ -201,14 +261,50 @@ export type OrderPayload = {
   order_number: string;
   status: OrderStatus;
   unit_price: number;
+  cancel_reason: string | null;
   created_at: string;
   event: { id: string; slug: string; name_en: string; name_ar: string };
   restaurant: { id: string; slug: string; name_en: string; name_ar: string };
   item: { id: string; name_en: string; name_ar: string };
-  customer: { id: string; name: string; email: string; phone: string };
+  customer: { id: string; name: string; email: string | null; phone: string };
 };
 
 export type PlaceOrderResult = {
   result: 'created' | 'duplicate';
   order: OrderPayload;
+};
+
+/** Shape returned by `request_phone_verification`. */
+export type RequestVerificationResult = {
+  result: 'created';
+  verification_id: string;
+  phone: string;
+  name: string;
+  expires_at: string;
+  event: { id: string; slug: string };
+};
+
+/** Shape returned by `confirm_phone_verification`. */
+export type ConfirmVerificationResult =
+  | {
+      result: 'verified';
+      verification_id: string;
+      phone: string;
+      event_id: string;
+      verified_at: string;
+    }
+  | { result: 'no_match'; reason?: string };
+
+/** Shape returned by `verification_session`. */
+export type VerificationSessionState = {
+  status: VerificationStatus | 'none';
+  /** Present only once the session is verified — never for a pending request. */
+  verification_id?: string;
+  phone?: string;
+  name?: string;
+  attempts?: number;
+  expires_at?: string;
+  session_expires_at?: string | null;
+  event?: { id: string; slug: string } | null;
+  order?: OrderPayload | null;
 };

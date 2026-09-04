@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { normalizeSaudiPhone } from '@/lib/phone';
+import { normalizeEmail } from '@/lib/email';
 
 /** A Saudi mobile number in any accepted format, normalized to E.164 on parse. */
 export const saudiPhoneSchema = z
@@ -22,18 +23,13 @@ export const customerNameSchema = z
   .max(120, 'name_invalid')
   .regex(/^[\p{L}\p{M}][\p{L}\p{M}\s'.\-]*$/u, 'name_invalid');
 
+/** An email address, trimmed and lowercased on parse. */
 export const emailSchema = z
   .string()
-  .trim()
-  .toLowerCase()
   .min(3, 'email_invalid')
   .max(254, 'email_invalid')
-  .regex(/^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$/, 'email_invalid');
-
-export const otpCodeSchema = z
-  .string()
-  .trim()
-  .regex(/^[0-9]{6}$/, 'otp_invalid');
+  .transform((value) => normalizeEmail(value) ?? '')
+  .refine((value) => /^[^@\s]+@[^@\s]+\.[a-zA-Z]{2,}$/.test(value), 'email_invalid');
 
 const uuidSchema = z.uuid('invalid_selection');
 
@@ -46,17 +42,11 @@ export const customerDetailsSchema = z.object({
 export type CustomerDetailsInput = z.input<typeof customerDetailsSchema>;
 export type CustomerDetails = z.output<typeof customerDetailsSchema>;
 
-export const sendOtpSchema = customerDetailsSchema;
-
-export const verifyOtpSchema = z.object({
-  phone: saudiPhoneSchema,
-  code: otpCodeSchema,
-});
-
 /**
  * Order submission. Ids are lookup keys only — the server re-reads the event,
  * restaurant, item and price from the database before creating anything.
- * There is deliberately no price field: the client cannot influence it.
+ * There is deliberately no price field: the client cannot influence it, and no
+ * "already checked for duplicates" flag: only the database decides that.
  */
 export const placeOrderSchema = z.object({
   eventSlug: z.string().trim().min(1, 'invalid_selection'),
@@ -64,6 +54,8 @@ export const placeOrderSchema = z.object({
   menuItemId: uuidSchema,
   name: customerNameSchema,
   email: emailSchema,
+  phone: saudiPhoneSchema,
+  deviceId: z.uuid().nullish(),
 });
 export type PlaceOrderInput = z.infer<typeof placeOrderSchema>;
 

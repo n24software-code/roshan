@@ -59,14 +59,13 @@ export type AdminOrder = OrderRow & {
     name: string;
     email: string;
     phone: string;
-    phone_verified: boolean;
   } | null;
   restaurants: { id: string; name_en: string; slug: string } | null;
   events: { id: string; name_en: string; slug: string } | null;
 };
 
 const ORDER_SELECT =
-  '*, customers(id, name, email, phone, phone_verified), restaurants(id, name_en, slug), events(id, name_en, slug)';
+  '*, customers(id, name, email, phone), restaurants(id, name_en, slug), events(id, name_en, slug)';
 
 /** Orders list with status filter, free-text search and pagination. */
 export async function getOrders(
@@ -195,7 +194,6 @@ export type AdminCustomer = {
   name: string;
   email: string;
   phone: string;
-  phone_verified: boolean;
   created_at: string;
   orders: { id: string; order_number: string; status: OrderStatus; event_id: string }[];
 };
@@ -210,12 +208,9 @@ export async function getCustomers(
 
   let query = supabase
     .from('customers')
-    .select(
-      'id, name, email, phone, phone_verified, created_at, orders(id, order_number, status, event_id)',
-      {
-        count: 'exact',
-      },
-    )
+    .select('id, name, email, phone, created_at, orders(id, order_number, status, event_id)', {
+      count: 'exact',
+    })
     .order('created_at', { ascending: false });
 
   const search = options.search?.trim();

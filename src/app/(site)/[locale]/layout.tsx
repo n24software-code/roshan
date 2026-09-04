@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import '@/app/globals.css';
 import { SiteHeader } from '@/components/customer/SiteHeader';
 import { SiteFooter } from '@/components/customer/SiteFooter';
+import { AnonymousSession } from '@/components/customer/AnonymousSession';
 import { LOCALES, dirOf, isLocale } from '@/lib/i18n/config';
 import { createTranslator } from '@/lib/i18n';
 import { getActiveEvent } from '@/lib/data/customer';
@@ -68,6 +69,8 @@ export default async function SiteLayout({
         >
           {t('common.skipToContent')}
         </a>
+        {/* Silently gives the guest an anonymous Supabase identity. */}
+        <AnonymousSession />
         <SiteHeader locale={locale} event={event} />
         <main id="main" className="flex-1">
           {children}

@@ -1,13 +1,15 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState, useTransition } from 'react';
+import { useEffect, useState, useTransition } from 'react';
 import { createTranslator } from '@/lib/i18n';
 import type { Locale } from '@/lib/i18n/config';
 import { normalizeSaudiPhone } from '@/lib/phone';
 import { customerDetailsSchema } from '@/lib/validation/schemas';
-import { sendVerificationCode } from '@/lib/orders/actions';
-import { detailsStore, selectionStore } from '@/lib/selection';
+import { placeOrder } from '@/lib/orders/actions';
+import { ensureAnonymousSession } from '@/lib/auth/anonymous';
+import { getDeviceId } from '@/lib/device';
+import { orderStore, selectionStore } from '@/lib/selection';
 import { Field, inputClass } from '@/components/ui/Field';
 import { Alert } from '@/components/ui/Alert';
 import { Button } from '@/components/ui/Button';
@@ -16,23 +18,22 @@ import { SaudiPhoneInput } from './SaudiPhoneInput';
 type FieldErrors = Partial<Record<'name' | 'email' | 'phone', string>>;
 
 /**
- * Collects the guest's details and starts phone verification.
+ * Collects the guest's details and places the order.
  *
- * Nothing is persisted server-side here — the customer record is only created
- * once the number has actually been verified.
+ * Name, email and phone are all required, and none of them is verified — the
+ * phone and email exist so the database can enforce one order per person per
+ * event. The duplicate decision is made entirely server-side.
  */
 export function DetailsForm({
   locale,
   eventSlug,
   restaurantId,
   menuItemId,
-  restaurantSlug,
 }: {
   locale: Locale;
   eventSlug: string;
   restaurantId: string;
   menuItemId: string;
-  restaurantSlug: string;
 }) {
   const t = createTranslator(locale);
   const router = useRouter();
@@ -43,6 +44,13 @@ export function DetailsForm({
   const [phone, setPhone] = useState('');
   const [errors, setErrors] = useState<FieldErrors>({});
   const [formError, setFormError] = useState<string | null>(null);
+
+  // The session and device id are normally already in place from the event
+  // page; make sure of it here so submitting never has to wait for them.
+  useEffect(() => {
+    getDeviceId();
+    void ensureAnonymousSession();
+  }, []);
 
   function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -61,27 +69,40 @@ export function DetailsForm({
     setErrors({});
 
     startTransition(async () => {
-      const result = await sendVerificationCode(parsed.data);
+      await ensureAnonymousSession();
+
+      const result = await placeOrder({
+        eventSlug,
+        restaurantId,
+        menuItemId,
+        name: parsed.data.name,
+        email: parsed.data.email,
+        phone: parsed.data.phone,
+        deviceId: getDeviceId(),
+      });
 
       if (!result.ok) {
         const message = t(`errors.${result.error}`);
         if (result.error === 'phone_invalid' || result.error === 'phone_required') {
           setErrors({ phone: message });
+        } else if (result.error === 'email_invalid') {
+          setErrors({ email: message });
+        } else if (result.error === 'name_invalid') {
+          setErrors({ name: message });
         } else {
           setFormError(message);
         }
         return;
       }
 
-      // Hand the flow to the verification screen.
-      selectionStore.set({ eventSlug, restaurantSlug, restaurantId, menuItemId });
-      detailsStore.set({
-        name: parsed.data.name,
-        email: parsed.data.email,
-        phone: parsed.data.phone,
-        menuItemId,
-      });
-      router.push(`/${locale}/verify`);
+      const { order, result: outcome } = result.data;
+      selectionStore.clear();
+      orderStore.set(order.order_number);
+
+      // A duplicate is not an error: the guest is shown the order they
+      // already have for this event, never a second one.
+      const suffix = outcome === 'duplicate' ? '?duplicate=1' : '';
+      router.replace(`/${locale}/confirmation/${order.order_number}${suffix}`);
     });
   }
 

@@ -81,7 +81,6 @@ export type CustomerRow = {
   name: string;
   email: string;
   phone: string;
-  phone_verified: boolean;
   created_at: string;
   updated_at: string;
 };
@@ -98,6 +97,14 @@ export type OrderRow = {
   item_name_ar: string;
   status: OrderStatus;
   cancel_reason: string | null;
+  /** E.164 snapshot of the guest's phone — half of the per-event duplicate key. */
+  normalized_phone: string;
+  /** Trimmed, lowercased snapshot of the guest's email — the other half. */
+  normalized_email: string;
+  /** The anonymous Supabase user that placed the order. */
+  auth_user_id: string | null;
+  /** Persistent browser id. Secondary signal only, never a business rule. */
+  device_id: string | null;
   created_at: string;
   updated_at: string;
 };
@@ -172,6 +179,9 @@ export type Database = {
     Functions: {
       is_admin: { Args: { p_user_id?: string }; Returns: boolean };
       current_customer_id: { Args: Record<never, never>; Returns: string };
+      customer_visible_to_current_user: { Args: { p_customer_id: string }; Returns: boolean };
+      normalize_saudi_phone: { Args: { p_input: string }; Returns: string | null };
+      normalize_email: { Args: { p_input: string }; Returns: string | null };
       place_order: {
         Args: {
           p_auth_user_id: string;
@@ -181,6 +191,7 @@ export type Database = {
           p_menu_item_id: string;
           p_name: string;
           p_email: string;
+          p_device_id?: string | null;
         };
         Returns: PlaceOrderResult;
       };

@@ -3,9 +3,8 @@
 import { createServerSupabase } from '@/lib/supabase/server';
 import { createAdminSupabase } from '@/lib/supabase/admin';
 import { hasServiceRoleKey } from '@/lib/supabase/env';
-import { normalizeSaudiPhone } from '@/lib/phone';
-import { sendOtpSchema, verifyOtpSchema, placeOrderSchema } from '@/lib/validation/schemas';
-import { mapAuthError, mapDatabaseError, type OrderErrorCode } from './errors';
+import { placeOrderSchema } from '@/lib/validation/schemas';
+import { mapDatabaseError, type OrderErrorCode } from './errors';
 import type { OrderPayload, PlaceOrderResult } from '@/types/database';
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: OrderErrorCode };
@@ -20,155 +19,33 @@ function firstIssueCode(issues: { message: string }[]): OrderErrorCode {
 }
 
 /**
- * In-process guard against hammering the resend button. Supabase Auth enforces
- * the real rate limit; this only keeps obvious repeats from leaving the server.
- */
-const RESEND_COOLDOWN_MS = 30_000;
-const lastSentAt = new Map<string, number>();
-
-function throttled(phone: string): boolean {
-  const previous = lastSentAt.get(phone);
-  const now = Date.now();
-  if (previous && now - previous < RESEND_COOLDOWN_MS) return true;
-  lastSentAt.set(phone, now);
-  if (lastSentAt.size > 5000) lastSentAt.clear();
-  return false;
-}
-
-// ---------------------------------------------------------------------------
-
-/**
- * Step 1 — send the 6-digit code.
+ * The one and only order-creation entry point.
  *
- * Supabase Auth delivers it through the configured Twilio SMS provider. No
- * customer row and no order exists at this point; nothing is written until the
- * number is actually verified.
+ * No code, no SMS, no verification: the guest gives their name, email and
+ * phone and the order is placed. Everything that matters is decided
+ * server-side — `place_order` normalizes the phone and email, re-reads the
+ * event, restaurant, item and price from the database, and the unique indexes
+ * on (event_id, normalized_phone) and (event_id, normalized_email) are what
+ * actually make a second order impossible.
  */
-export async function sendVerificationCode(input: {
-  name: string;
-  email: string;
-  phone: string;
-}): Promise<ActionResult<{ phone: string }>> {
-  const parsed = sendOtpSchema.safeParse(input);
-  if (!parsed.success) return fail(firstIssueCode(parsed.error.issues));
-
-  const { phone } = parsed.data;
-  if (throttled(phone)) return fail('otp_rate_limited');
-
-  const supabase = await createServerSupabase();
-  const { error } = await supabase.auth.signInWithOtp({
-    phone,
-    options: { channel: 'sms' },
-  });
-
-  if (error) {
-    lastSentAt.delete(phone);
-    return fail(mapAuthError(error.message, error.status));
-  }
-
-  return { ok: true, data: { phone } };
-}
-
-/**
- * Step 2 — verify the code and place the order in one round trip.
- *
- * Everything that matters is decided server-side: the phone comes from the
- * freshly verified session (never from the form), and `place_order` re-reads the
- * event, restaurant, item and price from the database inside one transaction.
- */
-export async function verifyAndPlaceOrder(input: {
-  phone: string;
-  code: string;
+export async function placeOrder(input: {
   eventSlug: string;
   restaurantId: string;
   menuItemId: string;
   name: string;
   email: string;
-}): Promise<ActionResult<{ result: 'created' | 'duplicate'; order: OrderPayload }>> {
-  const otpParsed = verifyOtpSchema.safeParse({ phone: input.phone, code: input.code });
-  if (!otpParsed.success) return fail(firstIssueCode(otpParsed.error.issues));
-
-  const orderParsed = placeOrderSchema.safeParse({
-    eventSlug: input.eventSlug,
-    restaurantId: input.restaurantId,
-    menuItemId: input.menuItemId,
-    name: input.name,
-    email: input.email,
-  });
-  if (!orderParsed.success) return fail(firstIssueCode(orderParsed.error.issues));
-
-  if (!hasServiceRoleKey()) return fail('unknown');
-
-  const supabase = await createServerSupabase();
-  const { data: session, error: verifyError } = await supabase.auth.verifyOtp({
-    phone: otpParsed.data.phone,
-    token: otpParsed.data.code,
-    type: 'sms',
-  });
-
-  if (verifyError) return fail(mapAuthError(verifyError.message, verifyError.status));
-
-  const user = session.user;
-  if (!user) return fail('not_verified');
-
-  // Trust the session's phone, not the submitted one.
-  const verifiedPhone = normalizeSaudiPhone(user.phone ?? otpParsed.data.phone);
-  if (!verifiedPhone) return fail('phone_invalid');
-
-  return placeOrderForUser({
-    authUserId: user.id,
-    phone: verifiedPhone,
-    ...orderParsed.data,
-  });
-}
-
-/**
- * Step 3 — create the order for an already verified session.
- *
- * Also used when a guest returns with a live session (e.g. after a refresh)
- * so the flow can finish without asking for another code.
- */
-export async function placeOrderForVerifiedSession(input: {
-  eventSlug: string;
-  restaurantId: string;
-  menuItemId: string;
-  name: string;
-  email: string;
+  phone: string;
+  deviceId?: string | null;
 }): Promise<ActionResult<{ result: 'created' | 'duplicate'; order: OrderPayload }>> {
   const parsed = placeOrderSchema.safeParse(input);
   if (!parsed.success) return fail(firstIssueCode(parsed.error.issues));
 
-  const supabase = await createServerSupabase();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  if (!hasServiceRoleKey()) return fail('order_failed');
 
-  if (!user?.phone) return fail('not_verified');
+  const authUserId = await currentOrNewAnonymousUserId();
+  if (!authUserId) return fail('not_authenticated');
 
-  const phone = normalizeSaudiPhone(user.phone);
-  if (!phone) return fail('phone_invalid');
-
-  return placeOrderForUser({ authUserId: user.id, phone, ...parsed.data });
-}
-
-async function placeOrderForUser({
-  authUserId,
-  phone,
-  eventSlug,
-  restaurantId,
-  menuItemId,
-  name,
-  email,
-}: {
-  authUserId: string;
-  phone: string;
-  eventSlug: string;
-  restaurantId: string;
-  menuItemId: string;
-  name: string;
-  email: string;
-}): Promise<ActionResult<{ result: 'created' | 'duplicate'; order: OrderPayload }>> {
-  if (!hasServiceRoleKey()) return fail('unknown');
+  const { eventSlug, restaurantId, menuItemId, name, email, phone, deviceId } = parsed.data;
 
   const admin = createAdminSupabase();
   const { data, error } = await admin.rpc('place_order', {
@@ -179,12 +56,40 @@ async function placeOrderForUser({
     p_menu_item_id: menuItemId,
     p_name: name,
     p_email: email,
+    p_device_id: deviceId ?? null,
   });
 
   if (error) return fail(mapDatabaseError(error.message));
 
   const payload = data as unknown as PlaceOrderResult | null;
-  if (!payload?.order) return fail('unknown');
+  if (!payload?.order) return fail('order_failed');
 
   return { ok: true, data: { result: payload.result, order: payload.order } };
+}
+
+/**
+ * The guest's anonymous Supabase user. The browser normally creates it when
+ * the event page opens; this is the fallback for the case where it did not
+ * (storage blocked, session expired between page load and submit).
+ */
+async function currentOrNewAnonymousUserId(): Promise<string | null> {
+  const supabase = await createServerSupabase();
+
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (user) return user.id;
+
+  const { data, error } = await supabase.auth.signInAnonymously();
+  if (error) {
+    // Without this the guest only ever sees "We could not start your session"
+    // and the operator has nothing to go on. The most common cause by far is
+    // `anonymous_provider_disabled`: Supabase dashboard -> Authentication ->
+    // Sign In / Providers -> Anonymous sign-ins.
+    console.error(
+      `[placeOrder] anonymous sign-in failed: ${error.code ?? error.status ?? 'unknown'} — ${error.message}`,
+    );
+    return null;
+  }
+  return data.user?.id ?? null;
 }

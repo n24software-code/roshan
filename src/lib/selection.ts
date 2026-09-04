@@ -7,6 +7,9 @@ import { useSyncExternalStore } from 'react';
  * cart. Persisted so a refresh mid-flow does not lose the selection; the server
  * still re-validates everything before an order is created.
  *
+ * Name, email and phone are never persisted here: they go straight from the
+ * form to the server action that places the order.
+ *
  * Exposed as external stores so components can subscribe with
  * `useSyncExternalStore` instead of copying storage into state inside an effect.
  */
@@ -18,15 +21,7 @@ export interface StoredSelection {
   menuItemId: string;
 }
 
-export interface PendingDetails {
-  name: string;
-  email: string;
-  phone: string;
-  menuItemId: string;
-}
-
 const SELECTION_KEY = 'event-order:selection';
-const DETAILS_KEY = 'event-order:pending-details';
 const ORDER_KEY = 'event-order:order-number';
 
 type Area = 'local' | 'session';
@@ -109,25 +104,11 @@ function createStore<T>(area: Area, key: string) {
 
 export const selectionStore = createStore<StoredSelection>('local', SELECTION_KEY);
 
-/** Name/email/phone held only for the verification step, in session storage. */
-export const detailsStore = createStore<PendingDetails>('session', DETAILS_KEY);
-
 /** The confirmed order number, so refreshing the confirmation page still works. */
 export const orderStore = createStore<string>('local', ORDER_KEY);
 
-const alwaysFalse = () => false;
-const alwaysTrue = () => true;
 const nullSnapshot = () => null;
-
-/** True once the browser has taken over from the server-rendered markup. */
-export function useHydrated(): boolean {
-  return useSyncExternalStore(subscribe, alwaysTrue, alwaysFalse);
-}
 
 export function useStoredSelection(): StoredSelection | null {
   return useSyncExternalStore(selectionStore.subscribe, selectionStore.get, nullSnapshot);
-}
-
-export function usePendingDetails(): PendingDetails | null {
-  return useSyncExternalStore(detailsStore.subscribe, detailsStore.get, nullSnapshot);
 }

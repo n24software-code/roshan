@@ -29,7 +29,6 @@ export async function GET(request: NextRequest) {
     'Customer',
     'Email',
     'Phone',
-    'Phone Verified',
     'Created At',
   ];
 
@@ -55,7 +54,6 @@ export async function GET(request: NextRequest) {
           order.customers?.name ?? '',
           order.customers?.email ?? '',
           order.customers?.phone ?? '',
-          order.customers?.phone_verified ? 'Yes' : 'No',
           order.created_at,
         ]
           .map(csvCell)

@@ -63,7 +63,13 @@ await db.exec(`
 check('auth schema, roles and realtime publication created', true);
 
 console.log('\nMigrations');
-for (const file of ['0001_init.sql', '0002_functions.sql', '0003_rls.sql', '0004_storage.sql']) {
+for (const file of [
+  '0001_init.sql',
+  '0002_functions.sql',
+  '0003_rls.sql',
+  '0004_storage.sql',
+  '0005_remove_phone_verification_add_event_identity.sql',
+]) {
   try {
     await db.exec(read(`supabase/migrations/${file}`));
     check(`${file} applied`, true);
@@ -164,9 +170,10 @@ const place = (overrides = {}) => {
     p_menu_item_id: twister.id,
     p_name: 'Test Guest',
     p_email: 'guest@example.com',
+    p_device_id: '11111111-2222-4333-8444-555555555555',
     ...overrides,
   };
-  return db.query(`select public.place_order($1,$2,$3,$4,$5,$6,$7) as result`, [
+  return db.query(`select public.place_order($1,$2,$3,$4,$5,$6,$7,$8) as result`, [
     args.p_auth_user_id,
     args.p_phone,
     args.p_event_slug,
@@ -174,6 +181,7 @@ const place = (overrides = {}) => {
     args.p_menu_item_id,
     args.p_name,
     args.p_email,
+    args.p_device_id,
   ]);
 };
 
@@ -186,7 +194,7 @@ const expectError = async (label, sentinel, overrides) => {
   }
 };
 
-console.log('\nOne order per customer per event');
+console.log('\nOne order per event, per phone and per email');
 {
   const { rows } = await place();
   const payload = rows[0].result;
@@ -208,10 +216,31 @@ console.log('\nOne order per customer per event');
     second.order.order_number === payload.order.order_number,
   );
 
-  const differentFormat = (await place({ p_phone: '+966551110001' })).rows[0].result;
+  for (const [label, phone] of [
+    ['05 5111 0001', '05 5111 0001'],
+    ['966551110001', '966551110001'],
+    ['00966551110001', '00966551110001'],
+    ['٠٥٥١١١٠٠٠١ (Arabic-Indic)', '٠٥٥١١١٠٠٠١'],
+  ]) {
+    const formatted = (await place({ p_phone: phone, p_email: 'someone-else@example.com' })).rows[0]
+      .result;
+    check(`same phone written as ${label} is refused`, formatted.result === 'duplicate');
+  }
+
+  const sameEmail = (
+    await place({
+      p_auth_user_id: userB,
+      p_phone: '+966551110002',
+      p_email: 'GUEST@Example.com  ',
+    })
+  ).rows[0].result;
   check(
-    'same phone in another format resolves to the same customer',
-    differentFormat.result === 'duplicate',
+    'a different phone with the same email (any case) is refused',
+    sameEmail.result === 'duplicate',
+  );
+  check(
+    'the duplicate response returns the guest their existing order',
+    sameEmail.order.order_number === payload.order.order_number,
   );
 
   const { rows: counted } = await db.query('select count(*) as n from public.orders');
@@ -222,9 +251,29 @@ console.log('\nOne order per customer per event');
   );
   check(
     'duplicate attempts are recorded for staff',
-    Number(attempts.n) === 2,
+    Number(attempts.n) === 6,
     `found ${attempts.n}`,
   );
+}
+
+console.log('\nA second event is a fresh start for the same guest');
+{
+  const second = await one(
+    `insert into public.events (slug, name_en, name_ar, order_prefix, status)
+     values ('fixture-event-two', 'Second Event', 'الفعالية الثانية', 'B', 'active')
+     returning id`,
+  );
+  await db.query(`insert into public.event_restaurants (event_id, restaurant_id) values ($1, $2)`, [
+    second.id,
+    kfc.id,
+  ]);
+
+  const again = (await place({ p_event_slug: 'fixture-event-two' })).rows[0].result;
+  check('the same phone and email may order again at another event', again.result === 'created');
+  check("and gets that event's own order prefix", /^B-\d+$/.test(again.order.order_number));
+
+  const repeat = (await place({ p_event_slug: 'fixture-event-two' })).rows[0].result;
+  check('but still only once there', repeat.result === 'duplicate');
 }
 
 console.log('\nServer-side validation');
@@ -244,7 +293,9 @@ await expectError('item from another restaurant is refused', 'ITEM_RESTAURANT_MI
   p_phone: '+966551110002',
   p_menu_item_id: otherItem.id,
 });
-await expectError('unverified caller is refused', 'NOT_VERIFIED', { p_auth_user_id: null });
+await expectError('a caller with no session is refused', 'NOT_AUTHENTICATED', {
+  p_auth_user_id: null,
+});
 await expectError('non-Saudi phone is refused', 'INVALID_PHONE', {
   p_auth_user_id: userB,
   p_phone: '+971501234567',
@@ -298,6 +349,26 @@ console.log('\nDatabase constraints');
      values ('X', 'x@y.com', '+966551110001')`,
   );
   await violates(
+    'a second order for the same event + phone is rejected by the index',
+    `insert into public.orders (order_number, event_id, customer_id, restaurant_id, menu_item_id,
+                                unit_price, item_name_en, item_name_ar,
+                                normalized_phone, normalized_email)
+     select 'DUP-1', o.event_id, o.customer_id, o.restaurant_id, o.menu_item_id,
+            o.unit_price, o.item_name_en, o.item_name_ar,
+            o.normalized_phone, 'someone-completely-different@example.com'
+     from public.orders o limit 1`,
+  );
+  await violates(
+    'a second order for the same event + email is rejected by the index',
+    `insert into public.orders (order_number, event_id, customer_id, restaurant_id, menu_item_id,
+                                unit_price, item_name_en, item_name_ar,
+                                normalized_phone, normalized_email)
+     select 'DUP-2', o.event_id, o.customer_id, o.restaurant_id, o.menu_item_id,
+            o.unit_price, o.item_name_en, o.item_name_ar,
+            '+966559999999', o.normalized_email
+     from public.orders o limit 1`,
+  );
+  await violates(
     'a menu item cannot use another restaurant’s category',
     `insert into public.menu_items (restaurant_id, category_id, name_en, name_ar, price)
      values ('${kfc.id}', '${otherCategory.id}', 'Bad', 'سيء', 10)`,
@@ -308,6 +379,91 @@ console.log('\nDatabase constraints');
     where conname = 'orders_one_per_customer_per_event' and contype = 'u'
   `);
   check('UNIQUE(event_id, customer_id) exists on orders', constraint.length === 1);
+
+  const { rows: identity } = await db.query(`
+    select indexname from pg_indexes
+    where schemaname = 'public' and tablename = 'orders'
+      and indexname in ('orders_event_phone_key', 'orders_event_email_key')
+    order by indexname
+  `);
+  check(
+    'UNIQUE(event_id, normalized_phone) and UNIQUE(event_id, normalized_email) exist',
+    identity.length === 2,
+    identity.map((i) => i.indexname).join(', '),
+  );
+
+  const { rows: notNull } = await db.query(`
+    select column_name, is_nullable from information_schema.columns
+    where table_schema = 'public' and table_name = 'orders'
+      and column_name in ('normalized_phone', 'normalized_email')
+  `);
+  check(
+    'the duplicate key columns are NOT NULL, so no order can dodge the index',
+    notNull.length === 2 && notNull.every((c) => c.is_nullable === 'NO'),
+    JSON.stringify(notNull),
+  );
+
+  const { rows: verified } = await db.query(`
+    select 1 from information_schema.columns
+    where table_schema = 'public' and table_name = 'customers' and column_name = 'phone_verified'
+  `);
+  check('customers.phone_verified is gone', verified.length === 0);
+}
+
+console.log('\nPhone and email normalization');
+{
+  const forms = await one(`
+    select public.normalize_saudi_phone('0551234567')       as national,
+           public.normalize_saudi_phone('+966551234567')    as e164,
+           public.normalize_saudi_phone('966551234567')     as international,
+           public.normalize_saudi_phone('00966551234567')   as zero_zero,
+           public.normalize_saudi_phone('+966 55 123 4567') as spaced,
+           public.normalize_saudi_phone('٠٥٥١٢٣٤٥٦٧')       as arabic,
+           public.normalize_saudi_phone('+971501234567')    as foreign_number,
+           public.normalize_saudi_phone('0521234567')       as unassigned
+  `);
+  check(
+    'every accepted Saudi format resolves to one value',
+    ['national', 'e164', 'international', 'zero_zero', 'spaced', 'arabic'].every(
+      (key) => forms[key] === '+966551234567',
+    ),
+    JSON.stringify(forms),
+  );
+  check('a non-Saudi number normalizes to null', forms.foreign_number === null);
+  check('an unassigned Saudi prefix normalizes to null', forms.unassigned === null);
+
+  const emails = await one(`
+    select public.normalize_email('  Ahmed@GMAIL.COM ') as mixed,
+           public.normalize_email('ahmed@gmail.com')    as plain,
+           public.normalize_email('a.h.med@gmail.com')  as dotted,
+           public.normalize_email('   ')                as blank
+  `);
+  check('email normalization is trim + lowercase', emails.mixed === emails.plain);
+  check('and nothing else — dots are preserved', emails.dotted === 'a.h.med@gmail.com');
+  check('a blank email normalizes to null', emails.blank === null);
+
+  // The trigger backstops a direct insert that bypasses place_order.
+  const thirdEvent = await one(
+    `insert into public.events (slug, name_en, name_ar, order_prefix, status)
+     values ('fixture-event-three', 'Third Event', 'الفعالية الثالثة', 'C', 'active')
+     returning id`,
+  );
+  const raw = await one(
+    `insert into public.orders (order_number, event_id, customer_id, restaurant_id, menu_item_id,
+                                unit_price, item_name_en, item_name_ar,
+                                normalized_phone, normalized_email)
+     select 'RAW-1', $1, c.id, $2, $3, 1, 'x', 'x', '0551110001', '  MIXED@Case.COM '
+     from public.customers c where c.phone = '+966551110001'
+     returning normalized_phone, normalized_email`,
+    [thirdEvent.id, kfc.id, twister.id],
+  ).catch((error) => ({ error: error.message }));
+  check(
+    'a direct insert is normalized by the trigger before it reaches the index',
+    raw?.normalized_phone === '+966551110001' && raw?.normalized_email === 'mixed@case.com',
+    JSON.stringify(raw),
+  );
+  await db.query(`delete from public.orders where order_number = 'RAW-1'`);
+  await db.query(`delete from public.events where slug = 'fixture-event-three'`);
 }
 
 console.log('\nStatus history and notifications');
@@ -345,6 +501,11 @@ console.log('\nStatus history and notifications');
   const stillThere = await one('select count(*) as n from public.orders where id = $1', [order.id]);
   check('cancelled orders stay in history', Number(stillThere.n) === 1);
 
+  const ordersBefore = await one(
+    'select count(*) as n from public.orders where restaurant_id = $1',
+    [kfc.id],
+  );
+
   await db.query(`update public.restaurants set status = 'disabled' where id = $1`, [kfc.id]);
   const disabledNotice = await one(
     `select count(*) as n from public.notifications where type = 'restaurant.disabled'`,
@@ -355,7 +516,11 @@ console.log('\nStatus history and notifications');
     'select count(*) as n from public.orders where restaurant_id = $1',
     [kfc.id],
   );
-  check('existing orders survive the restaurant being disabled', Number(ordersIntact.n) === 1);
+  check(
+    'existing orders survive the restaurant being disabled',
+    Number(ordersIntact.n) === Number(ordersBefore.n) && Number(ordersBefore.n) > 0,
+    `${ordersBefore.n} before, ${ordersIntact.n} after`,
+  );
 }
 
 console.log('\nImage storage');

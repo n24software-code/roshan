@@ -48,14 +48,6 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
         </span>
       ),
     },
-    {
-      label: 'Phone Verified',
-      value: order.customers?.phone_verified ? (
-        <span className="font-semibold text-brand-700">✓ Yes</span>
-      ) : (
-        <span className="font-semibold text-red-700">✕ No</span>
-      ),
-    },
     { label: 'Event', value: order.events?.name_en ?? '—' },
     { label: 'Restaurant', value: order.restaurants?.name_en ?? '—' },
     { label: 'Item', value: order.item_name_en },

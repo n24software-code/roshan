@@ -24,6 +24,8 @@ const RESTAURANT_SLUG = `restaurant-${SUFFIX}`;
 const DISABLED_SLUG = `disabled-${SUFFIX}`;
 const PHONE = '+966500000001';
 const SECOND_PHONE = '+966500000002';
+const EMAIL = 'guest@example.com';
+const DEVICE_ID = '11111111-2222-4333-8444-555555555555';
 
 describeLive('order placement rules', () => {
   let admin: SupabaseClient;
@@ -49,6 +51,7 @@ describeLive('order placement rules', () => {
     for (const customer of customers ?? []) {
       await admin.from('orders').delete().eq('customer_id', customer.id);
     }
+    await admin.from('orders').delete().in('normalized_phone', [PHONE, SECOND_PHONE]);
     await admin.from('customers').delete().in('phone', [PHONE, SECOND_PHONE]);
     await admin.from('restaurants').delete().in('slug', [RESTAURANT_SLUG, DISABLED_SLUG]);
     await admin.from('events').delete().in('slug', [EVENT_SLUG, OTHER_EVENT_SLUG]);
@@ -135,17 +138,19 @@ describeLive('order placement rules', () => {
     ids.unavailableItem = await insertItem(ids.restaurant, 'Test Sold Out', 40, false);
     ids.foreignItem = await insertItem(ids.disabledRestaurant, 'Other Kitchen Item', 25);
 
-    const createUser = async (phone: string) => {
+    // Stand-ins for the anonymous users the browser creates. Nothing about
+    // them is verified — they exist only to carry an auth.uid().
+    const createUser = async (email: string) => {
       const { data, error } = await admin.auth.admin.createUser({
-        phone: phone.replace('+', ''),
-        phone_confirm: true,
+        email,
+        email_confirm: true,
       });
       if (error) throw error;
       return data.user!.id;
     };
 
-    ids.authUser = await createUser(PHONE);
-    ids.secondAuthUser = await createUser(SECOND_PHONE);
+    ids.authUser = await createUser(`session-1-${SUFFIX}@example.com`);
+    ids.secondAuthUser = await createUser(`session-2-${SUFFIX}@example.com`);
   }, 60_000);
 
   afterAll(async () => {
@@ -164,7 +169,8 @@ describeLive('order placement rules', () => {
       p_restaurant_id: ids.restaurant,
       p_menu_item_id: ids.item,
       p_name: 'Test Guest',
-      p_email: 'guest@example.com',
+      p_email: EMAIL,
+      p_device_id: DEVICE_ID,
       ...overrides,
     });
 
@@ -207,8 +213,44 @@ describeLive('order placement rules', () => {
   });
 
   it('recognises the same person from a differently formatted phone number', async () => {
-    const { data } = await place({ p_phone: '+966500000001' });
+    for (const phone of ['0500000001', '966500000001', '00966500000001', '+966 50 000 0001']) {
+      const { data } = await place({ p_phone: phone, p_email: `other-${SUFFIX}@example.com` });
+      expect(data.result, phone).toBe('duplicate');
+    }
+  });
+
+  it('blocks a different phone that reuses an email already used at this event', async () => {
+    const { data } = await place({
+      p_auth_user_id: ids.secondAuthUser,
+      p_phone: SECOND_PHONE,
+      p_email: EMAIL.toUpperCase(),
+    });
     expect(data.result).toBe('duplicate');
+
+    const { count } = await admin
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', ids.event);
+    expect(count).toBe(1);
+  });
+
+  it('lets the same customer order again at a different event', async () => {
+    await admin.from('events').update({ status: 'active' }).eq('slug', OTHER_EVENT_SLUG);
+    await admin
+      .from('event_restaurants')
+      .upsert(
+        { event_id: ids.otherEvent, restaurant_id: ids.restaurant },
+        { onConflict: 'event_id,restaurant_id' },
+      );
+
+    const { data } = await place({ p_event_slug: OTHER_EVENT_SLUG });
+    expect(data.result).toBe('created');
+
+    const repeat = await place({ p_event_slug: OTHER_EVENT_SLUG });
+    expect(repeat.data.result).toBe('duplicate');
+
+    await admin.from('orders').delete().eq('event_id', ids.otherEvent);
+    await admin.from('events').update({ status: 'inactive' }).eq('slug', OTHER_EVENT_SLUG);
   });
 
   it('lets only one of three simultaneous submissions win', async () => {
@@ -270,9 +312,9 @@ describeLive('order placement rules', () => {
     expect(error?.message).toContain('EVENT_INACTIVE');
   });
 
-  it('rejects an unverified caller', async () => {
+  it('rejects a caller with no anonymous session', async () => {
     const { error } = await place({ p_auth_user_id: null });
-    expect(error?.message).toContain('NOT_VERIFIED');
+    expect(error?.message).toContain('NOT_AUTHENTICATED');
   });
 
   it('rejects a non-Saudi phone number', async () => {
@@ -393,6 +435,7 @@ describeLive('row level security', () => {
       p_menu_item_id: '00000000-0000-4000-8000-000000000000',
       p_name: 'Attacker',
       p_email: 'a@b.com',
+      p_device_id: null,
     });
     expect(error).not.toBeNull();
   });

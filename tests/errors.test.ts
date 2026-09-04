@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mapAuthError, mapDatabaseError, ORDER_ERROR_CODES } from '@/lib/orders/errors';
+import { mapDatabaseError, ORDER_ERROR_CODES } from '@/lib/orders/errors';
 import en from '@/messages/en.json';
 import ar from '@/messages/ar.json';
 
@@ -10,7 +10,7 @@ describe('error mapping', () => {
       ['RESTAURANT_DISABLED', 'restaurant_disabled'],
       ['ITEM_UNAVAILABLE', 'item_unavailable'],
       ['ITEM_RESTAURANT_MISMATCH', 'item_restaurant_mismatch'],
-      ['NOT_VERIFIED', 'not_verified'],
+      ['NOT_AUTHENTICATED', 'not_authenticated'],
       ['INVALID_PHONE', 'phone_invalid'],
     ];
 
@@ -23,14 +23,22 @@ describe('error mapping', () => {
     expect(mapDatabaseError('connection reset by peer')).toBe('unknown');
   });
 
-  it('distinguishes expired, incorrect and rate-limited OTP failures', () => {
-    expect(mapAuthError('Token has expired')).toBe('otp_expired');
-    expect(mapAuthError('Invalid token provided')).toBe('otp_incorrect');
-    expect(mapAuthError('Email rate limit exceeded', 429)).toBe('otp_rate_limited');
-    expect(mapAuthError('anything', 429)).toBe('otp_rate_limited');
-    expect(mapAuthError('Unsupported phone provider')).toBe('sms_not_configured');
-    // The exact message Supabase returns when Twilio credentials are not set.
-    expect(mapAuthError('Unable to get SMS provider', 500)).toBe('sms_not_configured');
+  it('reads a raw unique violation as "you already ordered"', () => {
+    // The safety net for a constraint that fires outside place_order's own
+    // exception block — the guest must never see a stack trace instead.
+    for (const message of [
+      'duplicate key value violates unique constraint "orders_event_phone_key"',
+      'duplicate key value violates unique constraint "orders_event_email_key"',
+      'duplicate key value violates unique constraint "orders_one_per_customer_per_event"',
+    ]) {
+      expect(mapDatabaseError(message)).toBe('duplicate_order');
+    }
+  });
+
+  it('has no verification codes left', () => {
+    for (const code of ORDER_ERROR_CODES) {
+      expect(code).not.toMatch(/otp|sms|verif/i);
+    }
   });
 
   it('has a translation for every error code in both languages', () => {

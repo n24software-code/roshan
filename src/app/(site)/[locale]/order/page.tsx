@@ -128,7 +128,6 @@ export default async function OrderPage({
               locale={locale}
               eventSlug={event.slug}
               restaurantId={restaurant.id}
-              restaurantSlug={restaurant.slug}
               menuItemId={item.id}
             />
           )}

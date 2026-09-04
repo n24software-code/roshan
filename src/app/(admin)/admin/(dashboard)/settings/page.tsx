@@ -5,6 +5,7 @@ import { getActiveEvent } from '@/lib/data/customer';
 import { PageHeader } from '@/components/admin/PageHeader';
 import { SettingsForm } from '@/components/admin/SettingsForm';
 import { hasServiceRoleKey } from '@/lib/supabase/env';
+import { anonymousSignInsEnabled } from '@/lib/supabase/health';
 import { Alert } from '@/components/ui/Alert';
 
 export const metadata = { title: 'Settings' };
@@ -12,7 +13,11 @@ export const dynamic = 'force-dynamic';
 
 export default async function SettingsPage() {
   const { supabase, user } = await requireAdmin();
-  const [settings, event] = await Promise.all([getSettings(supabase), getActiveEvent()]);
+  const [settings, event, anonymousEnabled] = await Promise.all([
+    getSettings(supabase),
+    getActiveEvent(),
+    anonymousSignInsEnabled(),
+  ]);
 
   return (
     <>
@@ -23,6 +28,14 @@ export default async function SettingsPage() {
           <Alert tone="error" title="SUPABASE_SERVICE_ROLE_KEY is not set">
             Guests cannot place orders until this server-side key is configured. Add it to your
             environment and restart the app.
+          </Alert>
+        )}
+
+        {anonymousEnabled === false && (
+          <Alert tone="error" title="Anonymous sign-ins are disabled in Supabase">
+            Guests cannot place orders: every submission fails with “We could not start your
+            session.” Enable it in the Supabase dashboard under Authentication → Sign In / Providers
+            → Anonymous sign-ins.
           </Alert>
         )}
 
@@ -55,11 +68,15 @@ export default async function SettingsPage() {
         </section>
 
         <section className="card-surface max-w-2xl p-6">
-          <h2 className="text-lg font-extrabold text-ink-900">SMS verification</h2>
+          <h2 className="text-lg font-extrabold text-ink-900">Guest sessions</h2>
           <p className="mt-2 text-sm text-ink-500">
-            One-time codes are sent by Supabase Auth through Twilio. Configure the provider in the
-            Supabase dashboard under Authentication → Sign In / Providers → Phone. No Twilio
-            credential is stored in this application.
+            Guests are never asked to register, log in or enter a code. Each browser is given a
+            Supabase anonymous session, which must stay enabled in the Supabase dashboard under
+            Authentication → Sign In / Providers → Anonymous sign-ins
+            {anonymousEnabled === true && ' (currently enabled)'}
+            {anonymousEnabled === false && ' (currently DISABLED — ordering is blocked)'}. Duplicate
+            orders are blocked by the database: one order per event per mobile number, and per email
+            address.
           </p>
         </section>
       </div>

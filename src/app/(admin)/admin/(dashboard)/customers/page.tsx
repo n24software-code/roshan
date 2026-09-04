@@ -53,7 +53,6 @@ export default async function CustomersPage({
             <Th>Name</Th>
             <Th>Email</Th>
             <Th>Phone</Th>
-            <Th>Phone Verified</Th>
             <Th>Orders</Th>
             <Th>Duplicate Attempts</Th>
             <Th>Created At</Th>
@@ -72,13 +71,6 @@ export default async function CustomersPage({
               </a>
             </Td>
             <Td className="numeric whitespace-nowrap">{formatSaudiPhone(customer.phone)}</Td>
-            <Td>
-              {customer.phone_verified ? (
-                <span className="font-semibold text-brand-700">✓ Verified</span>
-              ) : (
-                <span className="font-semibold text-ink-500">✕ Not verified</span>
-              )}
-            </Td>
             <Td>
               {customer.orders.length === 0 ? (
                 <span className="text-ink-400">No orders</span>

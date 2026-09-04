@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Event Dining",
+    "title": "Event SEREDO",
     "description": "Choose one dish from our partner kitchens and collect it at the venue."
   },
   "common": {
@@ -21,7 +21,7 @@
     "skipToContent": "Skip to main content"
   },
   "home": {
-    "eyebrow": "Event dining",
+    "eyebrow": "Event SEREDO",
     "cta": "Explore Restaurants",
     "restaurantsTitle": "Restaurants",
     "restaurantsSubtitle": "One order per guest. Choose the kitchen you would like to eat from.",
@@ -29,7 +29,7 @@
     "steps": {
       "one": { "title": "Choose a restaurant", "body": "Browse the kitchens taking part in this event." },
       "two": { "title": "Pick one dish", "body": "Each guest orders a single item." },
-      "three": { "title": "Verify your mobile", "body": "We send a 6-digit code to your Saudi number." },
+      "three": { "title": "Enter your details", "body": "Your name, email and Saudi mobile number." },
       "four": { "title": "Collect your order", "body": "Show your order number at the counter." }
     },
     "noEvent": {
@@ -77,26 +77,11 @@
     "email": "Email Address",
     "emailPlaceholder": "you@example.com",
     "phone": "Saudi Mobile Number",
-    "phoneHint": "We will send a 6-digit verification code to this number.",
+    "phoneHint": "One order per mobile number and per email address for this event.",
     "countryCode": "Saudi Arabia (+966)",
-    "submit": "Verify Phone Number",
-    "submitting": "Sending code...",
-    "privacy": "Your details are used only for this event order."
-  },
-  "otp": {
-    "title": "Verify Your Mobile Number",
-    "subtitle": "We sent a 6-digit verification code to",
-    "codeLabel": "Verification code",
-    "digitLabel": "Digit {index}",
-    "verify": "Verify",
-    "verifying": "Verifying...",
-    "noCode": "Didn't receive the code?",
-    "resend": "Resend code",
-    "resendIn": "Resend code in {seconds} seconds",
-    "sent": "Verification code sent to {phone}",
-    "verified": "Phone number verified",
-    "changeNumber": "Change number",
-    "creatingOrder": "Submitting order..."
+    "submit": "Place Order",
+    "submitting": "Placing your order...",
+    "privacy": "Your details are used only for this event order. We never send you a code."
   },
   "confirmation": {
     "title": "Order Confirmed",
@@ -130,13 +115,7 @@
     "email_invalid": "Please enter a valid email address.",
     "phone_required": "Please enter your mobile number.",
     "phone_invalid": "Please enter a valid Saudi mobile number.",
-    "otp_invalid": "Please enter the 6-digit verification code.",
-    "otp_incorrect": "The verification code is incorrect. Please try again.",
-    "otp_expired": "This verification code has expired. Please request a new code.",
-    "otp_rate_limited": "Too many attempts. Please wait a moment before requesting another code.",
-    "otp_send_failed": "We could not send the verification code. Please try again.",
-    "sms_not_configured": "SMS verification is not configured for this environment.",
-    "not_verified": "Please verify your mobile number first.",
+    "not_authenticated": "We could not start your session. Please refresh the page and try again.",
     "invalid_selection": "Please choose a restaurant and an item again.",
     "event_not_found": "This event is no longer available.",
     "event_inactive": "This event is not accepting orders.",
@@ -147,6 +126,7 @@
     "item_unavailable": "This item is currently unavailable.",
     "item_restaurant_mismatch": "That item does not belong to the selected restaurant.",
     "duplicate_order": "You have already placed an order for this event.",
+    "order_failed": "We could not place your order. Please try again.",
     "network": "Something went wrong. Please try again.",
     "unknown": "Something went wrong. Please try again."
   },

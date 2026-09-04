@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { customerDetailsSchema, otpCodeSchema, placeOrderSchema } from '@/lib/validation/schemas';
+import { customerDetailsSchema, placeOrderSchema } from '@/lib/validation/schemas';
 
 const VALID_UUID = '11111111-2222-4333-8444-555555555555';
 
@@ -55,15 +55,6 @@ describe('customer details', () => {
   });
 });
 
-describe('otp code', () => {
-  it('requires exactly six digits', () => {
-    expect(otpCodeSchema.safeParse('123456').success).toBe(true);
-    for (const code of ['12345', '1234567', 'abcdef', '12 34 56', '']) {
-      expect(otpCodeSchema.safeParse(code).success, code).toBe(false);
-    }
-  });
-});
-
 describe('order submission', () => {
   const valid = {
     eventSlug: 'leap-riyadh',
@@ -71,10 +62,37 @@ describe('order submission', () => {
     menuItemId: VALID_UUID,
     name: 'Ahmed Ali',
     email: 'a@b.com',
+    phone: '0551234567',
+    deviceId: VALID_UUID,
   };
 
   it('accepts a well-formed submission', () => {
     expect(placeOrderSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('normalizes the identity fields the duplicate rule is keyed on', () => {
+    const result = placeOrderSchema.safeParse({
+      ...valid,
+      email: '  Ahmed@GMAIL.COM ',
+      phone: '966551234567',
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.email).toBe('ahmed@gmail.com');
+      expect(result.data.phone).toBe('+966551234567');
+    }
+  });
+
+  it('requires name, email and phone', () => {
+    for (const field of ['name', 'email', 'phone'] as const) {
+      expect(placeOrderSchema.safeParse({ ...valid, [field]: '' }).success, field).toBe(false);
+    }
+  });
+
+  it('treats the device id as optional — it is never the business rule', () => {
+    expect(placeOrderSchema.safeParse({ ...valid, deviceId: null }).success).toBe(true);
+    const withoutDevice = { ...valid, deviceId: undefined };
+    expect(placeOrderSchema.safeParse(withoutDevice).success).toBe(true);
   });
 
   it('never carries a price — the client cannot influence what an order costs', () => {

@@ -62,10 +62,17 @@ export type AdminOrder = OrderRow & {
   } | null;
   restaurants: { id: string; name_en: string; slug: string } | null;
   events: { id: string; name_en: string; slug: string } | null;
+  order_items: {
+    id: string;
+    item_name_en: string;
+    item_name_ar: string;
+    unit_price: number;
+    category_id: string | null;
+  }[];
 };
 
 const ORDER_SELECT =
-  '*, customers(id, name, email, phone), restaurants(id, name_en, slug), events(id, name_en, slug)';
+  '*, customers(id, name, email, phone), restaurants(id, name_en, slug), events(id, name_en, slug), order_items(id, item_name_en, item_name_ar, unit_price, category_id)';
 
 /** Orders list with status filter, free-text search and pagination. */
 export async function getOrders(
@@ -270,7 +277,9 @@ export async function getNotifications(supabase: Client, limit = 50) {
 export async function getReport(supabase: Client, eventId?: string) {
   let query = supabase
     .from('orders')
-    .select('id, status, unit_price, item_name_en, restaurant_id, customer_id, created_at');
+    .select(
+      'id, status, unit_price, total_price, item_name_en, restaurant_id, customer_id, created_at, order_items(item_name_en, unit_price)',
+    );
   if (eventId) query = query.eq('event_id', eventId);
 
   const { data } = await query;
@@ -296,7 +305,8 @@ export async function getReport(supabase: Client, eventId?: string) {
     byStatus[order.status as OrderStatus] += 1;
     customers.add(order.customer_id);
 
-    const price = Number(order.unit_price);
+    // The order is worth the sum of its items, not just the headline one.
+    const price = Number(order.total_price ?? order.unit_price);
     // Cancelled orders stay in history but do not count towards order value.
     if (order.status !== 'cancelled') totalValue += price;
 
@@ -310,14 +320,24 @@ export async function getReport(supabase: Client, eventId?: string) {
     if (order.status !== 'cancelled') restaurantEntry.value += price;
     byRestaurant.set(order.restaurant_id, restaurantEntry);
 
-    const itemEntry = byItem.get(order.item_name_en) ?? {
-      name: order.item_name_en,
-      orders: 0,
-      value: 0,
-    };
-    itemEntry.orders += 1;
-    if (order.status !== 'cancelled') itemEntry.value += price;
-    byItem.set(order.item_name_en, itemEntry);
+    // Every chosen item counts once, so a dish ordered as a side still shows up.
+    const lines =
+      (order.order_items as unknown as { item_name_en: string; unit_price: number }[] | null) ?? [];
+    const countable =
+      lines.length > 0
+        ? lines
+        : [{ item_name_en: order.item_name_en, unit_price: order.unit_price }];
+
+    for (const line of countable) {
+      const itemEntry = byItem.get(line.item_name_en) ?? {
+        name: line.item_name_en,
+        orders: 0,
+        value: 0,
+      };
+      itemEntry.orders += 1;
+      if (order.status !== 'cancelled') itemEntry.value += Number(line.unit_price);
+      byItem.set(line.item_name_en, itemEntry);
+    }
   }
 
   const sortByOrders = <T extends { orders: number }>(entries: T[]) =>

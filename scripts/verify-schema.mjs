@@ -69,6 +69,7 @@ for (const file of [
   '0003_rls.sql',
   '0004_storage.sql',
   '0005_remove_phone_verification_add_event_identity.sql',
+  '0006_order_items_one_per_category.sql',
 ]) {
   try {
     await db.exec(read(`supabase/migrations/${file}`));
@@ -167,7 +168,7 @@ const place = (overrides = {}) => {
     p_phone: '+966551110001',
     p_event_slug: 'leap-riyadh',
     p_restaurant_id: kfc.id,
-    p_menu_item_id: twister.id,
+    p_menu_item_ids: [twister.id],
     p_name: 'Test Guest',
     p_email: 'guest@example.com',
     p_device_id: '11111111-2222-4333-8444-555555555555',
@@ -178,7 +179,7 @@ const place = (overrides = {}) => {
     args.p_phone,
     args.p_event_slug,
     args.p_restaurant_id,
-    args.p_menu_item_id,
+    args.p_menu_item_ids,
     args.p_name,
     args.p_email,
     args.p_device_id,
@@ -209,7 +210,7 @@ console.log('\nOne order per event, per phone and per email');
     `${payload.order.unit_price} vs ${twister.price}`,
   );
 
-  const second = (await place({ p_menu_item_id: fries.id })).rows[0].result;
+  const second = (await place({ p_menu_item_ids: [fries.id] })).rows[0].result;
   check('a second order is refused as duplicate', second.result === 'duplicate');
   check(
     'the duplicate response returns the original order',
@@ -276,22 +277,87 @@ console.log('\nA second event is a fresh start for the same guest');
   check('but still only once there', repeat.result === 'duplicate');
 }
 
+console.log('\nOne item per category, one restaurant');
+{
+  await db.exec(`delete from public.orders`);
+
+  const cats = (
+    await db.query(
+      `select id, name_en from public.menu_categories where restaurant_id = $1 order by display_order`,
+      [kfc.id],
+    )
+  ).rows;
+  const pick = (categoryId) =>
+    one(
+      `select id, name_en, price from public.menu_items
+       where category_id = $1 and is_available order by price desc limit 1`,
+      [categoryId],
+    );
+  const [c1, c2, c3] = await Promise.all(cats.slice(0, 3).map((c) => pick(c.id)));
+  const expected = Number(c1.price) + Number(c2.price) + Number(c3.price);
+
+  const multi = (await place({ p_menu_item_ids: [c1.id, c2.id, c3.id] })).rows[0].result;
+  check('an item from each of three categories is accepted', multi.result === 'created');
+  check(
+    `all three items are stored on the one order`,
+    multi.order.items.length === 3,
+    JSON.stringify(multi.order.items?.map((i) => i.name_en)),
+  );
+  check(
+    `the total is summed server-side (${multi.order.total_price} = ${expected})`,
+    Number(multi.order.total_price) === expected,
+  );
+
+  const rows = await one(`select count(*) as n from public.order_items`);
+  check('order_items holds one row per chosen item', Number(rows.n) === 3);
+
+  const second = await one(
+    `select id from public.menu_items where category_id = $1 and id <> $2 limit 1`,
+    [cats[0].id, c1.id],
+  );
+  await expectError('two items from one category are refused', 'DUPLICATE_CATEGORY', {
+    p_auth_user_id: userB,
+    p_phone: '+966551110002',
+    p_email: 'b@example.com',
+    p_menu_item_ids: [c1.id, second.id],
+  });
+  await expectError('an empty selection is refused', 'NO_ITEMS_SELECTED', {
+    p_auth_user_id: userB,
+    p_phone: '+966551110002',
+    p_email: 'b@example.com',
+    p_menu_item_ids: [],
+  });
+  await expectError('an item from another restaurant is refused', 'ITEM_RESTAURANT_MISMATCH', {
+    p_auth_user_id: userB,
+    p_phone: '+966551110002',
+    p_email: 'b@example.com',
+    p_menu_item_ids: [c1.id, otherItem.id],
+  });
+
+  const { rows: guard } = await db.query(`
+    select indexname from pg_indexes
+    where schemaname = 'public' and tablename = 'order_items'
+      and indexname = 'order_items_one_per_category'
+  `);
+  check('UNIQUE(order_id, category_id) exists on order_items', guard.length === 1);
+}
+
 console.log('\nServer-side validation');
 await expectError('disabled restaurant is refused', 'RESTAURANT_DISABLED', {
   p_auth_user_id: userB,
   p_phone: '+966551110002',
   p_restaurant_id: closedRestaurant.id,
-  p_menu_item_id: closedItem.id,
+  p_menu_item_ids: [closedItem.id],
 });
 await expectError('unavailable item is refused', 'ITEM_UNAVAILABLE', {
   p_auth_user_id: userB,
   p_phone: '+966551110002',
-  p_menu_item_id: soldOutItem.id,
+  p_menu_item_ids: [soldOutItem.id],
 });
 await expectError('item from another restaurant is refused', 'ITEM_RESTAURANT_MISMATCH', {
   p_auth_user_id: userB,
   p_phone: '+966551110002',
-  p_menu_item_id: otherItem.id,
+  p_menu_item_ids: [otherItem.id],
 });
 await expectError('a caller with no session is refused', 'NOT_AUTHENTICATED', {
   p_auth_user_id: null,

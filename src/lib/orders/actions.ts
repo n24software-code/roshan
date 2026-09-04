@@ -24,14 +24,15 @@ function firstIssueCode(issues: { message: string }[]): OrderErrorCode {
  * No code, no SMS, no verification: the guest gives their name, email and
  * phone and the order is placed. Everything that matters is decided
  * server-side — `place_order` normalizes the phone and email, re-reads the
- * event, restaurant, item and price from the database, and the unique indexes
- * on (event_id, normalized_phone) and (event_id, normalized_email) are what
- * actually make a second order impossible.
+ * event, restaurant, every item, its category and its price from the database,
+ * and the unique indexes on (event_id, normalized_phone) and
+ * (event_id, normalized_email) are what actually make a second order
+ * impossible. No price or total ever travels from the browser.
  */
 export async function placeOrder(input: {
   eventSlug: string;
   restaurantId: string;
-  menuItemId: string;
+  menuItemIds: string[];
   name: string;
   email: string;
   phone: string;
@@ -45,7 +46,7 @@ export async function placeOrder(input: {
   const authUserId = await currentOrNewAnonymousUserId();
   if (!authUserId) return fail('not_authenticated');
 
-  const { eventSlug, restaurantId, menuItemId, name, email, phone, deviceId } = parsed.data;
+  const { eventSlug, restaurantId, menuItemIds, name, email, phone, deviceId } = parsed.data;
 
   const admin = createAdminSupabase();
   const { data, error } = await admin.rpc('place_order', {
@@ -53,7 +54,7 @@ export async function placeOrder(input: {
     p_phone: phone,
     p_event_slug: eventSlug,
     p_restaurant_id: restaurantId,
-    p_menu_item_id: menuItemId,
+    p_menu_item_ids: menuItemIds,
     p_name: name,
     p_email: email,
     p_device_id: deviceId ?? null,

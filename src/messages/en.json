@@ -12,6 +12,7 @@
     "loading": "Loading",
     "currency": "SAR",
     "price": "Price",
+    "total": "Total",
     "restaurant": "Restaurant",
     "item": "Item",
     "language": "Language",
@@ -49,6 +50,7 @@
     "select": "Select",
     "selected": "Selected",
     "unavailable": "Unavailable",
+    "itemsSelected": "{count} items selected",
     "noResults": "No menu items match your search.",
     "noItems": "No menu items available.",
     "continueWith": "Continue with {item}",
@@ -60,7 +62,7 @@
   },
   "selection": {
     "title": "Your Selection",
-    "subtitle": "Review your choice before you continue. You can order one item per event.",
+    "subtitle": "Review your choices before you continue. You can pick one item from each category.",
     "changeSelection": "Change selection",
     "continue": "Continue",
     "empty": {
@@ -125,6 +127,8 @@
     "item_not_found": "This item is no longer available.",
     "item_unavailable": "This item is currently unavailable.",
     "item_restaurant_mismatch": "That item does not belong to the selected restaurant.",
+    "duplicate_category": "You can only choose one item from each category.",
+    "no_items_selected": "Please choose at least one item.",
     "duplicate_order": "You have already placed an order for this event.",
     "order_failed": "We could not place your order. Please try again.",
     "network": "Something went wrong. Please try again.",

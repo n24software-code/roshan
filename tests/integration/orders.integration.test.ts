@@ -167,7 +167,7 @@ describeLive('order placement rules', () => {
       p_phone: PHONE,
       p_event_slug: EVENT_SLUG,
       p_restaurant_id: ids.restaurant,
-      p_menu_item_id: ids.item,
+      p_menu_item_ids: [ids.item],
       p_name: 'Test Guest',
       p_email: EMAIL,
       p_device_id: DEVICE_ID,
@@ -196,11 +196,11 @@ describeLive('order placement rules', () => {
   });
 
   it('blocks a second order for the same event, whatever the guest changes', async () => {
-    const second = await place({ p_menu_item_id: ids.expensiveItem });
+    const second = await place({ p_menu_item_ids: [ids.expensiveItem] });
     expect(second.data.result).toBe('duplicate');
 
     const third = await place({
-      p_menu_item_id: ids.expensiveItem,
+      p_menu_item_ids: [ids.expensiveItem],
       p_name: 'Different Name',
     });
     expect(third.data.result).toBe('duplicate');
@@ -258,7 +258,7 @@ describeLive('order placement rules', () => {
 
     const results = await Promise.all([
       place(),
-      place({ p_menu_item_id: ids.expensiveItem }),
+      place({ p_menu_item_ids: [ids.expensiveItem] }),
       place(),
     ]);
 
@@ -280,7 +280,7 @@ describeLive('order placement rules', () => {
       p_auth_user_id: ids.secondAuthUser,
       p_phone: SECOND_PHONE,
       p_restaurant_id: ids.disabledRestaurant,
-      p_menu_item_id: ids.foreignItem,
+      p_menu_item_ids: [ids.foreignItem],
     });
     expect(error?.message).toContain('RESTAURANT_DISABLED');
   });
@@ -289,7 +289,7 @@ describeLive('order placement rules', () => {
     const { error } = await place({
       p_auth_user_id: ids.secondAuthUser,
       p_phone: SECOND_PHONE,
-      p_menu_item_id: ids.unavailableItem,
+      p_menu_item_ids: [ids.unavailableItem],
     });
     expect(error?.message).toContain('ITEM_UNAVAILABLE');
   });
@@ -298,7 +298,7 @@ describeLive('order placement rules', () => {
     const { error } = await place({
       p_auth_user_id: ids.secondAuthUser,
       p_phone: SECOND_PHONE,
-      p_menu_item_id: ids.foreignItem,
+      p_menu_item_ids: [ids.foreignItem],
     });
     expect(error?.message).toContain('ITEM_RESTAURANT_MISMATCH');
   });
@@ -432,7 +432,7 @@ describeLive('row level security', () => {
       p_phone: PHONE,
       p_event_slug: EVENT_SLUG,
       p_restaurant_id: '00000000-0000-4000-8000-000000000000',
-      p_menu_item_id: '00000000-0000-4000-8000-000000000000',
+      p_menu_item_ids: ['00000000-0000-4000-8000-000000000000'],
       p_name: 'Attacker',
       p_email: 'a@b.com',
       p_device_id: null,

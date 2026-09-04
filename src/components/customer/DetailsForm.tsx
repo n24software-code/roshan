@@ -22,18 +22,19 @@ type FieldErrors = Partial<Record<'name' | 'email' | 'phone', string>>;
  *
  * Name, email and phone are all required, and none of them is verified — the
  * phone and email exist so the database can enforce one order per person per
- * event. The duplicate decision is made entirely server-side.
+ * event. The duplicate decision, the item checks and the total are all made
+ * server-side; this form only reports which items were chosen.
  */
 export function DetailsForm({
   locale,
   eventSlug,
   restaurantId,
-  menuItemId,
+  menuItemIds,
 }: {
   locale: Locale;
   eventSlug: string;
   restaurantId: string;
-  menuItemId: string;
+  menuItemIds: string[];
 }) {
   const t = createTranslator(locale);
   const router = useRouter();
@@ -74,7 +75,7 @@ export function DetailsForm({
       const result = await placeOrder({
         eventSlug,
         restaurantId,
-        menuItemId,
+        menuItemIds,
         name: parsed.data.name,
         email: parsed.data.email,
         phone: parsed.data.phone,

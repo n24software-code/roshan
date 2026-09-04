@@ -3,9 +3,11 @@
 import { useSyncExternalStore } from 'react';
 
 /**
- * The guest's in-progress choice. One restaurant, one item — deliberately not a
- * cart. Persisted so a refresh mid-flow does not lose the selection; the server
- * still re-validates everything before an order is created.
+ * The guest's in-progress choice: one restaurant, and at most one item from
+ * each of its categories. Deliberately not a cart — there are no quantities.
+ * Persisted so a refresh mid-flow does not lose the selection; the server still
+ * re-validates every item, its restaurant, its category and its price before an
+ * order is created, so nothing here is trusted.
  *
  * Name, email and phone are never persisted here: they go straight from the
  * form to the server action that places the order.
@@ -14,11 +16,18 @@ import { useSyncExternalStore } from 'react';
  * `useSyncExternalStore` instead of copying storage into state inside an effect.
  */
 
+export interface SelectedItem {
+  menuItemId: string;
+  /** Category the item was chosen from. Null means "uncategorised". */
+  categoryId: string | null;
+}
+
 export interface StoredSelection {
   eventSlug: string;
   restaurantSlug: string;
   restaurantId: string;
-  menuItemId: string;
+  /** At most one entry per categoryId — enforced again on the server. */
+  items: SelectedItem[];
 }
 
 const SELECTION_KEY = 'event-order:selection';
@@ -102,7 +111,37 @@ function createStore<T>(area: Area, key: string) {
   };
 }
 
-export const selectionStore = createStore<StoredSelection>('local', SELECTION_KEY);
+const baseSelectionStore = createStore<StoredSelection>('local', SELECTION_KEY);
+
+export const selectionStore = {
+  ...baseSelectionStore,
+
+  /**
+   * Adds, replaces or removes one item.
+   *
+   * Choosing an item in a category that already has one replaces it; choosing
+   * the item that is already selected clears it. A selection that belongs to a
+   * different restaurant is discarded rather than merged, so a guest can never
+   * build an order spanning two kitchens.
+   */
+  toggle(context: Omit<StoredSelection, 'items'>, item: SelectedItem) {
+    const current = baseSelectionStore.get();
+    const sameRestaurant = current?.restaurantId === context.restaurantId;
+    const existing = sameRestaurant ? (current?.items ?? []) : [];
+
+    const alreadySelected = existing.some((entry) => entry.menuItemId === item.menuItemId);
+    const items = existing.filter(
+      (entry) => entry.categoryId !== item.categoryId && entry.menuItemId !== item.menuItemId,
+    );
+    if (!alreadySelected) items.push(item);
+
+    if (items.length === 0) {
+      baseSelectionStore.clear();
+      return;
+    }
+    baseSelectionStore.set({ ...context, items });
+  },
+};
 
 /** The confirmed order number, so refreshing the confirmation page still works. */
 export const orderStore = createStore<string>('local', ORDER_KEY);

@@ -91,8 +91,11 @@ export type OrderRow = {
   event_id: string;
   customer_id: string;
   restaurant_id: string;
+  /** The primary (most expensive) item. Kept for the admin list and reports. */
   menu_item_id: string;
   unit_price: number;
+  /** Sum of every order_items row. Maintained by trigger, never by a client. */
+  total_price: number;
   item_name_en: string;
   item_name_ar: string;
   status: OrderStatus;
@@ -107,6 +110,18 @@ export type OrderRow = {
   device_id: string | null;
   created_at: string;
   updated_at: string;
+};
+
+export type OrderItemRow = {
+  id: string;
+  order_id: string;
+  menu_item_id: string;
+  /** Category the item was in when ordered. At most one row per category. */
+  category_id: string | null;
+  unit_price: number;
+  item_name_en: string;
+  item_name_ar: string;
+  created_at: string;
 };
 
 export type OrderStatusHistoryRow = {
@@ -169,6 +184,7 @@ export type Database = {
       menu_items: Table<MenuItemRow>;
       customers: Table<CustomerRow>;
       orders: Table<OrderRow>;
+      order_items: Table<OrderItemRow>;
       order_status_history: Table<OrderStatusHistoryRow>;
       notifications: Table<NotificationRow>;
       user_roles: Table<UserRoleRow>;
@@ -188,7 +204,7 @@ export type Database = {
           p_phone: string;
           p_event_slug: string;
           p_restaurant_id: string;
-          p_menu_item_id: string;
+          p_menu_item_ids: string[];
           p_name: string;
           p_email: string;
           p_device_id?: string | null;
@@ -212,10 +228,19 @@ export type OrderPayload = {
   order_number: string;
   status: OrderStatus;
   unit_price: number;
+  total_price: number;
   created_at: string;
   event: { id: string; slug: string; name_en: string; name_ar: string };
   restaurant: { id: string; slug: string; name_en: string; name_ar: string };
+  /** The primary item, kept for callers that only need a headline. */
   item: { id: string; name_en: string; name_ar: string };
+  items: {
+    id: string;
+    category_id: string | null;
+    name_en: string;
+    name_ar: string;
+    unit_price: number;
+  }[];
   customer: { id: string; name: string; email: string; phone: string };
 };
 

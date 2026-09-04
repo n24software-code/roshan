@@ -15,13 +15,20 @@ export default async function OrderPage({
   searchParams,
 }: {
   params: Promise<{ locale: string }>;
-  searchParams: Promise<{ item?: string }>;
+  searchParams: Promise<{ items?: string; item?: string }>;
 }) {
   const { locale, t } = await getLocaleContext(params);
-  const { item: menuItemId } = await searchParams;
+  const { items: itemsParam, item: legacyParam } = await searchParams;
+
+  // `items` is the current shape; `item` keeps an older bookmarked link working.
+  const menuItemIds = (itemsParam ?? legacyParam ?? '')
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
 
   const event = await getActiveEvent();
-  const selection = event && menuItemId ? await getSelection(event.id, menuItemId) : null;
+  const selection =
+    event && menuItemIds.length > 0 ? await getSelection(event.id, menuItemIds) : null;
 
   // Nothing chosen (or the link was stale): send the guest back to browsing.
   if (!event || !selection) {
@@ -40,9 +47,9 @@ export default async function OrderPage({
     );
   }
 
-  const { item, restaurant } = selection;
+  const { restaurant, entries, total } = selection;
   const restaurantClosed = restaurant.status !== 'active';
-  const itemUnavailable = !item.is_available;
+  const itemUnavailable = entries.some(({ item }) => !item.is_available);
   const blocked = restaurantClosed || itemUnavailable;
 
   return (
@@ -68,27 +75,45 @@ export default async function OrderPage({
         <p className="mt-2 text-ink-500">{t('selection.subtitle')}</p>
 
         <div className="card-surface mt-6 overflow-hidden">
-          <div className="flex gap-4 p-5">
-            <div className="relative h-24 w-24 shrink-0 overflow-hidden rounded-xl bg-sand-200">
-              <MediaImage reference={item.image_url} alt="" sizes="96px" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-semibold tracking-[0.14em] text-ink-500 uppercase">
-                {t('common.restaurant')}
-              </p>
-              <p className="font-bold text-ink-900">{localized(restaurant, 'name', locale)}</p>
-
-              <p className="mt-3 text-xs font-semibold tracking-[0.14em] text-ink-500 uppercase">
-                {t('common.item')}
-              </p>
-              <p className="font-bold text-ink-900">{localized(item, 'name', locale)}</p>
-            </div>
+          <div className="border-b border-sand-200 px-5 py-4">
+            <p className="text-xs font-semibold tracking-[0.14em] text-ink-500 uppercase">
+              {t('common.restaurant')}
+            </p>
+            <p className="font-bold text-ink-900">{localized(restaurant, 'name', locale)}</p>
           </div>
 
+          <ul className="divide-y divide-sand-200">
+            {entries.map(({ item, category }) => (
+              <li key={item.id} className="flex gap-4 p-5">
+                <div className="relative h-20 w-20 shrink-0 overflow-hidden rounded-xl bg-sand-200">
+                  <MediaImage reference={item.image_url} alt="" sizes="80px" />
+                </div>
+                <div className="flex min-w-0 flex-1 items-center justify-between gap-4">
+                  <div className="min-w-0">
+                    {category && (
+                      <p className="text-xs font-semibold tracking-[0.14em] text-ink-500 uppercase">
+                        {localized(category, 'name', locale)}
+                      </p>
+                    )}
+                    <p className="font-bold text-ink-900">{localized(item, 'name', locale)}</p>
+                    {!item.is_available && (
+                      <p className="mt-1 text-sm font-semibold text-red-700">
+                        {t('restaurant.unavailable')}
+                      </p>
+                    )}
+                  </div>
+                  <span className="numeric shrink-0 font-bold text-ink-900">
+                    {formatPrice(Number(item.price), locale)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+
           <div className="flex items-center justify-between border-t border-sand-200 bg-sand-50 px-5 py-4">
-            <span className="text-sm font-semibold text-ink-600">{t('common.price')}</span>
+            <span className="text-sm font-semibold text-ink-600">{t('common.total')}</span>
             <span className="numeric text-lg font-extrabold text-ink-900">
-              {formatPrice(Number(item.price), locale)}
+              {formatPrice(total, locale)}
             </span>
           </div>
         </div>
@@ -128,7 +153,7 @@ export default async function OrderPage({
               locale={locale}
               eventSlug={event.slug}
               restaurantId={restaurant.id}
-              menuItemId={item.id}
+              menuItemIds={entries.map(({ item }) => item.id)}
             />
           )}
         </div>

@@ -6,14 +6,17 @@ import { createClient } from '@/lib/supabase/client';
 import { createTranslator, formatPrice, localized } from '@/lib/i18n';
 import type { Locale } from '@/lib/i18n/config';
 import { orderStore } from '@/lib/selection';
-import type { OrderRow, OrderStatus, RestaurantRow } from '@/types/database';
+import type { OrderItemRow, OrderRow, OrderStatus, RestaurantRow } from '@/types/database';
 import { StatusTimeline } from './StatusTimeline';
 import { OrderQr } from './OrderQr';
 import { Alert } from '@/components/ui/Alert';
 import { Skeleton } from '@/components/ui/Skeleton';
 import { buttonClass } from '@/components/ui/Button';
 
-type OrderView = OrderRow & { restaurants: Pick<RestaurantRow, 'name_en' | 'name_ar'> | null };
+type OrderView = OrderRow & {
+  restaurants: Pick<RestaurantRow, 'name_en' | 'name_ar'> | null;
+  order_items: Pick<OrderItemRow, 'id' | 'item_name_en' | 'item_name_ar' | 'unit_price'>[] | null;
+};
 
 /**
  * Confirmation and live tracking.
@@ -45,7 +48,9 @@ export function OrderConfirmation({
     async function load() {
       const { data } = await supabase
         .from('orders')
-        .select('*, restaurants(name_en, name_ar)')
+        .select(
+          '*, restaurants(name_en, name_ar), order_items(id, item_name_en, item_name_ar, unit_price)',
+        )
         .eq('order_number', orderNumber)
         .maybeSingle();
 
@@ -110,7 +115,21 @@ export function OrderConfirmation({
   }
 
   const restaurantName = order.restaurants ? localized(order.restaurants, 'name', locale) : '';
-  const itemName = locale === 'ar' ? order.item_name_ar : order.item_name_en;
+
+  // Fall back to the order's own snapshot if the items could not be read, so
+  // the confirmation always shows something meaningful.
+  const lines =
+    order.order_items && order.order_items.length > 0
+      ? [...order.order_items].sort((a, b) => Number(b.unit_price) - Number(a.unit_price))
+      : [
+          {
+            id: order.id,
+            item_name_en: order.item_name_en,
+            item_name_ar: order.item_name_ar,
+            unit_price: order.unit_price,
+          },
+        ];
+  const total = Number(order.total_price ?? order.unit_price);
 
   return (
     <div className="space-y-8">
@@ -163,12 +182,15 @@ export function OrderConfirmation({
       {/* ------------------------------------------------------ summary */}
       <dl className="card-surface divide-y divide-sand-200">
         <Row label={t('common.restaurant')} value={restaurantName} />
-        <Row label={t('common.item')} value={itemName} />
-        <Row
-          label={t('common.price')}
-          value={formatPrice(Number(order.unit_price), locale)}
-          numeric
-        />
+        {lines.map((line) => (
+          <Row
+            key={line.id}
+            label={locale === 'ar' ? line.item_name_ar : line.item_name_en}
+            value={formatPrice(Number(line.unit_price), locale)}
+            numeric
+          />
+        ))}
+        <Row label={t('common.total')} value={formatPrice(total, locale)} numeric emphasis />
         <Row label={t('confirmation.status')} value={t(`status.${order.status as OrderStatus}`)} />
       </dl>
 
@@ -202,11 +224,29 @@ export function OrderConfirmation({
   );
 }
 
-function Row({ label, value, numeric }: { label: string; value: string; numeric?: boolean }) {
+function Row({
+  label,
+  value,
+  numeric,
+  emphasis,
+}: {
+  label: string;
+  value: string;
+  numeric?: boolean;
+  emphasis?: boolean;
+}) {
   return (
-    <div className="flex items-center justify-between gap-4 px-5 py-4">
-      <dt className="text-sm font-semibold text-ink-500">{label}</dt>
-      <dd className={`text-end font-bold text-ink-900 ${numeric ? 'numeric' : ''}`}>{value}</dd>
+    <div
+      className={`flex items-center justify-between gap-4 px-5 py-4 ${emphasis ? 'bg-sand-50' : ''}`}
+    >
+      <dt className={`text-sm font-semibold ${emphasis ? 'text-ink-700' : 'text-ink-500'}`}>
+        {label}
+      </dt>
+      <dd
+        className={`text-end font-bold text-ink-900 ${numeric ? 'numeric' : ''} ${emphasis ? 'text-lg font-extrabold' : ''}`}
+      >
+        {value}
+      </dd>
     </div>
   );
 }

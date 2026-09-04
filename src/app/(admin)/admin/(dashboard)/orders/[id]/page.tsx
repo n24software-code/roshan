@@ -25,6 +25,18 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
 
   const history = await getOrderHistory(supabase, order.id);
 
+  // Orders placed before order_items existed fall back to their own snapshot.
+  const lines =
+    order.order_items && order.order_items.length > 0
+      ? [...order.order_items].sort((a, b) => Number(b.unit_price) - Number(a.unit_price))
+      : [
+          {
+            id: order.id,
+            item_name_en: order.item_name_en,
+            unit_price: order.unit_price,
+          },
+        ];
+
   const details: { label: string; value: React.ReactNode }[] = [
     { label: 'Customer', value: order.customers?.name ?? '—' },
     {
@@ -50,10 +62,13 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
     },
     { label: 'Event', value: order.events?.name_en ?? '—' },
     { label: 'Restaurant', value: order.restaurants?.name_en ?? '—' },
-    { label: 'Item', value: order.item_name_en },
     {
-      label: 'Price',
-      value: <span className="numeric">SAR {Number(order.unit_price).toFixed(2)}</span>,
+      label: 'Total',
+      value: (
+        <span className="numeric">
+          SAR {Number(order.total_price ?? order.unit_price).toFixed(2)}
+        </span>
+      ),
     },
     {
       label: 'Order Created',
@@ -95,6 +110,20 @@ export default async function OrderDetailPage({ params }: { params: Promise<{ id
               </div>
             ))}
           </dl>
+
+          <div className="border-t border-sand-200 px-5 py-4">
+            <p className="mb-3 text-xs font-bold tracking-[0.1em] text-ink-500 uppercase">Items</p>
+            <ul className="space-y-2">
+              {lines.map((line) => (
+                <li key={line.id} className="flex items-center justify-between gap-4 text-sm">
+                  <span className="font-semibold text-ink-800">{line.item_name_en}</span>
+                  <span className="numeric shrink-0 font-semibold text-ink-900">
+                    SAR {Number(line.unit_price).toFixed(2)}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          </div>
 
           {order.cancel_reason && (
             <div className="border-t border-sand-200 bg-red-50 px-5 py-4">

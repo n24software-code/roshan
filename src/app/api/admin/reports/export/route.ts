@@ -24,7 +24,7 @@ export async function GET(request: NextRequest) {
     'Status',
     'Event',
     'Restaurant',
-    'Item',
+    'Items',
     'Order Value (SAR)',
     'Customer',
     'Email',
@@ -49,8 +49,10 @@ export async function GET(request: NextRequest) {
           order.status,
           order.events?.name_en ?? '',
           order.restaurants?.name_en ?? '',
-          order.item_name_en,
-          Number(order.unit_price).toFixed(2),
+          (order.order_items ?? []).length > 0
+            ? order.order_items.map((line) => line.item_name_en).join(' + ')
+            : order.item_name_en,
+          Number(order.total_price ?? order.unit_price).toFixed(2),
           order.customers?.name ?? '',
           order.customers?.email ?? '',
           order.customers?.phone ?? '',

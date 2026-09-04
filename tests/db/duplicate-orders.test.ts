@@ -20,6 +20,7 @@ const MIGRATIONS = [
   '0003_rls.sql',
   '0004_storage.sql',
   '0005_remove_phone_verification_add_event_identity.sql',
+  '0006_order_items_one_per_category.sql',
 ];
 
 /** Supabase-specific objects PGlite does not ship. */
@@ -43,11 +44,20 @@ const STUBS = `
   alter table storage.objects enable row level security;
 `;
 
-type PlaceResult = { result: 'created' | 'duplicate'; order: { order_number: string; id: string } };
+type PlaceResult = {
+  result: 'created' | 'duplicate';
+  order: {
+    order_number: string;
+    id: string;
+    total_price: number;
+    items: { id: string; name_en: string; unit_price: number; category_id: string | null }[];
+  };
+};
 
 describe('event-level duplicate protection', () => {
   let db: PGlite;
-  const ids = { restaurant: '', item: '', otherItem: '', user: '' };
+  const ids = { restaurant: '', item: '', otherItem: '', dip: '', drink: '', user: '' };
+  const cats = { mains: '', dips: '', drinks: '' };
 
   const one = async <T>(sql: string, params: unknown[] = []) =>
     (await db.query<T>(sql, params)).rows[0];
@@ -59,7 +69,7 @@ describe('event-level duplicate protection', () => {
       p_phone: '0551234567',
       p_event_slug: 'event-a',
       p_restaurant_id: ids.restaurant,
-      p_menu_item_id: ids.item,
+      p_menu_item_ids: [ids.item],
       p_name: 'Ahmed',
       p_email: 'ahmed@gmail.com',
       p_device_id: '11111111-2222-4333-8444-555555555555',
@@ -72,7 +82,7 @@ describe('event-level duplicate protection', () => {
         args.p_phone,
         args.p_event_slug,
         args.p_restaurant_id,
-        args.p_menu_item_id,
+        args.p_menu_item_ids,
         args.p_name,
         args.p_email,
         args.p_device_id,
@@ -125,17 +135,32 @@ describe('event-level duplicate protection', () => {
       [ids.restaurant],
     );
 
-    const insertItem = async (name: string, price: number) =>
+    const insertCategory = async (name: string, order: number) =>
       (
         await one<{ id: string }>(
-          `insert into public.menu_items (restaurant_id, name_en, name_ar, price)
+          `insert into public.menu_categories (restaurant_id, name_en, name_ar, display_order)
            values ($1, $2, $2, $3) returning id`,
-          [ids.restaurant, name, price],
+          [ids.restaurant, name, order],
         )
       ).id;
 
-    ids.item = await insertItem('Burger', 32);
-    ids.otherItem = await insertItem('Wagyu', 199.5);
+    cats.mains = await insertCategory('Mains', 1);
+    cats.dips = await insertCategory('Dips', 2);
+    cats.drinks = await insertCategory('Drinks', 3);
+
+    const insertItem = async (name: string, price: number, categoryId: string) =>
+      (
+        await one<{ id: string }>(
+          `insert into public.menu_items (restaurant_id, category_id, name_en, name_ar, price)
+           values ($1, $2, $3, $3, $4) returning id`,
+          [ids.restaurant, categoryId, name, price],
+        )
+      ).id;
+
+    ids.item = await insertItem('Burger', 32, cats.mains);
+    ids.otherItem = await insertItem('Wagyu', 199.5, cats.mains);
+    ids.dip = await insertItem('BBQ', 5, cats.dips);
+    ids.drink = await insertItem('Orange Juice', 20, cats.drinks);
   }, 60_000);
 
   afterAll(async () => {
@@ -172,7 +197,7 @@ describe('event-level duplicate protection', () => {
     const first = await one<{ order_number: string }>(
       `select order_number from public.orders order by created_at limit 1`,
     );
-    const result = await place({ p_menu_item_id: ids.otherItem });
+    const result = await place({ p_menu_item_ids: [ids.otherItem] });
 
     expect(result.result).toBe('duplicate');
     expect(result.order.order_number).toBe(first.order_number);
@@ -284,6 +309,91 @@ describe('event-level duplicate protection', () => {
 
     expect(Number(attempts.n)).toBeGreaterThan(1);
     expect(await orderCount('event-a')).toBe(1);
+  });
+
+  it('accepts one item from each category and sums the total server-side', async () => {
+    const result = await place({
+      p_event_slug: 'event-b',
+      p_phone: '0557000001',
+      p_email: 'multi@gmail.com',
+      p_menu_item_ids: [ids.item, ids.dip, ids.drink],
+    });
+
+    expect(result.result).toBe('created');
+    expect(result.order.items).toHaveLength(3);
+    // 32 + 5 + 20 — never taken from the caller, which sends no prices at all.
+    expect(Number(result.order.total_price)).toBe(57);
+
+    const rows = await one<{ n: string }>(
+      `select count(*) as n from public.order_items where order_id = $1`,
+      [result.order.id],
+    );
+    expect(Number(rows.n)).toBe(3);
+  });
+
+  it('refuses two items from the same category', async () => {
+    await expect(
+      place({
+        p_phone: '0557000002',
+        p_email: 'twocat@gmail.com',
+        p_menu_item_ids: [ids.item, ids.otherItem],
+      }),
+    ).rejects.toThrow(/DUPLICATE_CATEGORY/);
+  });
+
+  it('refuses an empty selection', async () => {
+    await expect(
+      place({ p_phone: '0557000003', p_email: 'empty@gmail.com', p_menu_item_ids: [] }),
+    ).rejects.toThrow(/NO_ITEMS_SELECTED/);
+  });
+
+  it('collapses a repeated id instead of reading it as two choices', async () => {
+    const result = await place({
+      p_phone: '0557000004',
+      p_email: 'repeat@gmail.com',
+      p_event_slug: 'event-b',
+      p_menu_item_ids: [ids.dip, ids.dip, ids.dip],
+    });
+
+    // Three copies of one id are one choice, not a same-category collision.
+    expect(result.result).toBe('created');
+    expect(result.order.items).toHaveLength(1);
+    expect(Number(result.order.total_price)).toBe(5);
+  });
+
+  it('lets the unique index stop a second item sneaking into a category', async () => {
+    const order = await one<{ id: string }>(
+      `select o.id from public.orders o
+       join public.events e on e.id = o.event_id where e.slug = 'event-a'`,
+    );
+
+    await expect(
+      db.query(
+        `insert into public.order_items (order_id, menu_item_id, category_id, unit_price, item_name_en, item_name_ar)
+         values ($1, $2, $3, 1, 'x', 'x')`,
+        [order.id, ids.otherItem, cats.mains],
+      ),
+    ).rejects.toThrow(/order_items_one_per_category|unique/i);
+  });
+
+  it('keeps orders.total_price in step with its items', async () => {
+    // The three-item order placed above, addressed by its own identity.
+    const order = await one<{ id: string; total_price: string }>(
+      `select id, total_price from public.orders where normalized_email = 'multi@gmail.com'`,
+    );
+    const before = Number(order.total_price);
+    expect(before).toBe(57);
+
+    await db.query(`delete from public.order_items where order_id = $1 and category_id = $2`, [
+      order.id,
+      cats.drinks,
+    ]);
+
+    const after = await one<{ total_price: string }>(
+      `select total_price from public.orders where id = $1`,
+      [order.id],
+    );
+    expect(Number(after.total_price)).toBe(before - 20);
   });
 
   it('refuses to place an order without an anonymous session', async () => {

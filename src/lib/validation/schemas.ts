@@ -51,7 +51,9 @@ export type CustomerDetails = z.output<typeof customerDetailsSchema>;
 export const placeOrderSchema = z.object({
   eventSlug: z.string().trim().min(1, 'invalid_selection'),
   restaurantId: uuidSchema,
-  menuItemId: uuidSchema,
+  // One item per category, so the array is short by construction. The cap is a
+  // sanity bound; the server re-derives the real limit from the menu itself.
+  menuItemIds: z.array(uuidSchema).min(1, 'invalid_selection').max(20, 'invalid_selection'),
   name: customerNameSchema,
   email: emailSchema,
   phone: saudiPhoneSchema,

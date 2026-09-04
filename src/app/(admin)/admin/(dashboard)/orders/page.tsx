@@ -96,9 +96,14 @@ export default async function OrdersPage({
               {order.customers ? formatSaudiPhone(order.customers.phone) : '—'}
             </Td>
             <Td>{order.restaurants?.name_en ?? '—'}</Td>
-            <Td>{order.item_name_en}</Td>
+            <Td>
+              {order.item_name_en}
+              {order.order_items && order.order_items.length > 1 && (
+                <span className="text-ink-500"> +{order.order_items.length - 1}</span>
+              )}
+            </Td>
             <Td className="numeric text-right font-semibold">
-              SAR {Number(order.unit_price).toFixed(2)}
+              SAR {Number(order.total_price ?? order.unit_price).toFixed(2)}
             </Td>
             <Td>
               <StatusBadge status={order.status} />

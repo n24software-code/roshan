@@ -89,7 +89,7 @@ export function Sidebar({ email, unread }: { email: string; unread: number }) {
             >
               ⌂
             </span>
-            <span className="text-sm font-extrabold tracking-tight">Event Dining</span>
+            <span className="text-sm font-extrabold tracking-tight">Event</span>
           </div>
           <button
             type="button"

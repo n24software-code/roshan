@@ -59,7 +59,7 @@ describe('order submission', () => {
   const valid = {
     eventSlug: 'leap-riyadh',
     restaurantId: VALID_UUID,
-    menuItemId: VALID_UUID,
+    menuItemIds: [VALID_UUID],
     name: 'Ahmed Ali',
     email: 'a@b.com',
     phone: '0551234567',
@@ -105,7 +105,8 @@ describe('order submission', () => {
   });
 
   it('rejects ids that are not uuids', () => {
-    expect(placeOrderSchema.safeParse({ ...valid, menuItemId: 'burger' }).success).toBe(false);
+    expect(placeOrderSchema.safeParse({ ...valid, menuItemIds: ['burger'] }).success).toBe(false);
+    expect(placeOrderSchema.safeParse({ ...valid, menuItemIds: [] }).success).toBe(false);
     expect(placeOrderSchema.safeParse({ ...valid, restaurantId: '1' }).success).toBe(false);
   });
 });

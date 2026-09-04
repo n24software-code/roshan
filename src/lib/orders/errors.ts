@@ -17,6 +17,8 @@ export const ORDER_ERROR_CODES = [
   'item_not_found',
   'item_unavailable',
   'item_restaurant_mismatch',
+  'duplicate_category',
+  'no_items_selected',
   'duplicate_order',
   'order_failed',
   'network',
@@ -28,7 +30,7 @@ export type OrderErrorCode = (typeof ORDER_ERROR_CODES)[number];
 /** Maps the sentinel raised by the `place_order` database function onto a code. */
 export function mapDatabaseError(message: string): OrderErrorCode {
   const sentinel = message.match(
-    /\b(NOT_AUTHENTICATED|INVALID_PHONE|INVALID_NAME|INVALID_EMAIL|EVENT_NOT_FOUND|EVENT_INACTIVE|RESTAURANT_NOT_FOUND|RESTAURANT_DISABLED|RESTAURANT_NOT_IN_EVENT|ITEM_NOT_FOUND|ITEM_UNAVAILABLE|ITEM_RESTAURANT_MISMATCH)\b/,
+    /\b(NOT_AUTHENTICATED|INVALID_PHONE|INVALID_NAME|INVALID_EMAIL|EVENT_NOT_FOUND|EVENT_INACTIVE|RESTAURANT_NOT_FOUND|RESTAURANT_DISABLED|RESTAURANT_NOT_IN_EVENT|ITEM_NOT_FOUND|ITEM_UNAVAILABLE|ITEM_RESTAURANT_MISMATCH|DUPLICATE_CATEGORY|NO_ITEMS_SELECTED|TOO_MANY_ITEMS)\b/,
   )?.[1];
 
   switch (sentinel) {
@@ -56,6 +58,11 @@ export function mapDatabaseError(message: string): OrderErrorCode {
       return 'item_unavailable';
     case 'ITEM_RESTAURANT_MISMATCH':
       return 'item_restaurant_mismatch';
+    case 'DUPLICATE_CATEGORY':
+      return 'duplicate_category';
+    case 'NO_ITEMS_SELECTED':
+    case 'TOO_MANY_ITEMS':
+      return 'no_items_selected';
     default:
       break;
   }

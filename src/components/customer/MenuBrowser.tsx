@@ -12,10 +12,12 @@ import { buttonClass } from '@/components/ui/Button';
 import type { MenuCategoryRow, MenuItemRow, RestaurantRow } from '@/types/database';
 
 /**
- * Menu browsing and single-item selection.
+ * Menu browsing and selection.
  *
- * There is no cart and no quantity control by design: choosing an item replaces
- * whatever was chosen before, so exactly one item can ever be selected.
+ * A guest may pick at most one item from each category of this restaurant.
+ * There is still no cart and no quantity control: choosing another item in the
+ * same category replaces it, and choosing the selected item again clears it.
+ * The category filter is a browsing aid only — it never touches the selection.
  */
 export function MenuBrowser({
   locale,
@@ -39,11 +41,20 @@ export function MenuBrowser({
   // The stored selection *is* the state: choosing an item writes to the store
   // and every subscriber re-renders. A choice made earlier for this restaurant
   // is therefore restored automatically, with no effect and no copy in state.
+  //
+  // A selection belonging to another restaurant is ignored outright, and items
+  // that have since disappeared or sold out are dropped, so a stale store can
+  // never show a selection the server would refuse.
   const stored = useStoredSelection();
-  const selectedId =
-    stored && stored.restaurantId === restaurant.id && items.some((i) => i.id === stored.menuItemId)
-      ? stored.menuItemId
-      : null;
+  const selectedIds = useMemo(() => {
+    if (!stored || stored.restaurantId !== restaurant.id) return new Set<string>();
+    return new Set(
+      (stored.items ?? [])
+        .map((entry) => items.find((item) => item.id === entry.menuItemId))
+        .filter((item): item is MenuItemRow => Boolean(item?.is_available))
+        .map((item) => item.id),
+    );
+  }, [stored, restaurant.id, items]);
 
   const visible = useMemo(() => {
     return items.filter((item) => {
@@ -74,16 +85,15 @@ export function MenuBrowser({
     return buckets;
   }, [categories, visible]);
 
-  const selected = items.find((item) => item.id === selectedId) ?? null;
+  const selected = items.filter((item) => selectedIds.has(item.id));
+  const total = selected.reduce((sum, item) => sum + Number(item.price), 0);
 
   function select(item: MenuItemRow) {
     if (!item.is_available) return;
-    selectionStore.set({
-      eventSlug,
-      restaurantSlug: restaurant.slug,
-      restaurantId: restaurant.id,
-      menuItemId: item.id,
-    });
+    selectionStore.toggle(
+      { eventSlug, restaurantSlug: restaurant.slug, restaurantId: restaurant.id },
+      { menuItemId: item.id, categoryId: item.category_id },
+    );
   }
 
   return (
@@ -155,7 +165,7 @@ export function MenuBrowser({
                     key={item.id}
                     item={item}
                     locale={locale}
-                    selected={item.id === selectedId}
+                    selected={selectedIds.has(item.id)}
                     onSelect={() => select(item)}
                   />
                 ))}
@@ -166,20 +176,24 @@ export function MenuBrowser({
       </div>
 
       {/* ------------------------------------------------- continue bar */}
-      {selected && (
+      {selected.length > 0 && (
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-sand-200 bg-white/95 backdrop-blur-md">
           <div className="container-page flex items-center justify-between gap-4 py-4">
             <div className="min-w-0">
               <p className="truncate text-sm font-bold text-ink-900">
-                {localized(selected, 'name', locale)}
+                {selected.length === 1
+                  ? localized(selected[0], 'name', locale)
+                  : t('restaurant.itemsSelected', { count: selected.length })}
               </p>
               <p className="numeric text-sm font-semibold text-brand-700">
-                {formatPrice(Number(selected.price), locale)}
+                {formatPrice(total, locale)}
               </p>
             </div>
             <button
               type="button"
-              onClick={() => router.push(`/${locale}/order?item=${selected.id}`)}
+              onClick={() =>
+                router.push(`/${locale}/order?items=${selected.map((item) => item.id).join(',')}`)
+              }
               className={buttonClass('primary', 'lg', 'shrink-0')}
             >
               {t('common.continue')}
